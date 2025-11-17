@@ -141,16 +141,45 @@ public class Mineracao {
 			String prUrl = BASE_URL + "/repos/" + repo.toPath() + "/pulls/" + n;
 			Path prDetail = prDir.resolve("pull.json");
 			if (!Files.exists(prDetail)) {
-				fetchSingle(prUrl, prDetail);
+				// Alguns PRs muito antigos podem não existir mais ou retornarem 404 — ignore nesses casos
+				if (!fetchSingleAllow404(prUrl, prDetail)) {
+					log("PR %d: detalhe 404 (ignorado)", n);
+					// Sem detalhe, ainda podemos tentar reviews? Em geral 404 também.
+				}
 			} else {
 				log("PR %d: detalhe já existe, pulando.", n);
 			}
 
 			// Reviews da PR (para aprovações/reviews)
 			String reviewsUrl = BASE_URL + "/repos/" + repo.toPath() + "/pulls/" + n + "/reviews?per_page=100";
-			fetchPaginated(reviewsUrl, prDir, "reviews");
-			consolidatePages(prDir, "reviews", "reviews.json");
+			try {
+				fetchPaginated(reviewsUrl, prDir, "reviews");
+				consolidatePages(prDir, "reviews", "reviews.json");
+			} catch (RuntimeException ex) {
+				String msg = ex.getMessage();
+				if (msg != null && msg.contains("Falha HTTP 404")) {
+					log("PR %d: reviews 404 (ignorado)", n);
+				} else {
+					throw ex;
+				}
+			}
 		}
+	}
+
+	/**
+	 * Variante de fetchSingle que ignora 404 e retorna false nesses casos.
+	 */
+	private boolean fetchSingleAllow404(String url, Path outFile) throws IOException, InterruptedException {
+		HttpRequest request = baseRequest(URI.create(url)).GET().build();
+		HttpResponse<String> resp = send(request);
+		int code = resp.statusCode();
+		if (code == 404) {
+			return false;
+		}
+		ensureSuccess(resp);
+		write(outFile, resp.body());
+		rateLimitLog(resp.headers());
+		return true;
 	}
 
 	/**
@@ -161,7 +190,7 @@ public class Mineracao {
 	private static List<Integer> extractPrNumbers(String pullsListJson) {
 		List<Integer> nums = new ArrayList<>();
 		// Regex simples: "number" : 123,
-		String regex = "\"number\"\s*:\s*(\\d+)";
+	String regex = "\\\"number\\\"\\s*:\\s*(\\d+)";
 		java.util.regex.Pattern p = java.util.regex.Pattern.compile(regex);
 		java.util.regex.Matcher m = p.matcher(pullsListJson);
 		while (m.find()) {
@@ -185,39 +214,35 @@ public class Mineracao {
 	 * Não faz parsing completo: concatena os elementos dos arrays de cada página, preservando ordem por número da página.
 	 */
 	private static void consolidatePages(Path dir, String baseName, String outputFileName) {
-		try {
-			List<Path> pages = listPageFiles(dir, baseName);
-			if (pages.isEmpty()) return;
-
-			StringBuilder sb = new StringBuilder();
-			sb.append('[');
+		List<Path> pages;
+		try { pages = listPageFiles(dir, baseName); } catch (IOException e) { throw new UncheckedIOException(e); }
+		if (pages.isEmpty()) return;
+		Path out = dir.resolve(outputFileName);
+		try (java.io.BufferedWriter w = Files.newBufferedWriter(out, StandardCharsets.UTF_8,
+				StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+			w.write('[');
 			boolean first = true;
 			for (Path p : pages) {
 				String s = Files.readString(p, StandardCharsets.UTF_8).trim();
 				if (s.isEmpty()) continue;
 				int iOpen = s.indexOf('[');
 				int iClose = s.lastIndexOf(']');
-				if (iOpen < 0 || iClose < 0 || iClose <= iOpen) {
-					// fallback: se não for array, trata o corpo todo como um único elemento
-					if (!first) sb.append(',');
-					sb.append(s);
-					first = false;
-					continue;
+				String inside;
+				if (iOpen >= 0 && iClose > iOpen) {
+					inside = s.substring(iOpen + 1, iClose).trim();
+				} else {
+					inside = s;
 				}
-				String inside = s.substring(iOpen + 1, iClose).trim();
 				if (inside.isEmpty()) continue;
-				if (!first) sb.append(',');
-				sb.append(inside);
+				if (!first) w.write(',');
+				w.write(inside);
 				first = false;
 			}
-			sb.append(']');
-
-			Path out = dir.resolve(outputFileName);
-			write(out, sb.toString());
-			log("Consolidado %s -> %s", baseName, out.getFileName());
+			w.write(']');
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
+		log("Consolidado %s -> %s", baseName, out.getFileName());
 	}
 
 	private static List<Path> listPageFiles(Path dir, String baseName) throws IOException {
@@ -304,7 +329,8 @@ public class Mineracao {
 				.header("Accept", "application/vnd.github+json")
 				.header("User-Agent", USER_AGENT);
 		if (token != null) {
-			b.header("Authorization", "Bearer " + token);
+			// GitHub PATs tradicionais usam prefixo 'token'. Fine-grained também aceitam 'Bearer', mas 'token' garante compatibilidade.
+			b.header("Authorization", "token " + token);
 		}
 		return b;
 	}
