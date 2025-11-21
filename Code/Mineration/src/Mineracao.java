@@ -203,7 +203,7 @@ public class Mineracao {
 					isResume = true;
 					log("  → Retomando da página %d (checkpoint encontrado)", startPage);
 				}
-			} catch (Exception e) {
+			} catch (IOException | NumberFormatException e) {
 				log("  ⚠ Erro ao ler checkpoint, iniciando do zero");
 				isResume = false;
 			}
@@ -267,13 +267,16 @@ public class Mineracao {
 					
 					// Pequena pausa para evitar rate limiting
 					if (url != null) {
-						Thread.sleep(100);
+						safeWait(100);
 					}
 					
-				} catch (Exception e) {
+				} catch (IOException | InterruptedException e) {
 					log("  ✗ Erro na página %d: %s", page, e.getMessage());
 					log("  → Checkpoint salvo, você pode retomar com: java -cp bin App");
-					throw e;
+					if (e instanceof InterruptedException) {
+						Thread.currentThread().interrupt();
+					}
+					throw new RuntimeException(e);
 				}
 			}
 			
@@ -423,7 +426,7 @@ public class Mineracao {
 			url = parseNextLink(resp.headers()).orElse(null);
 			page++;
 			if (url != null) {
-				Thread.sleep(100);
+				safeWait(100);
 			}
 		}
 
@@ -438,7 +441,7 @@ public class Mineracao {
 				startFrom = Integer.parseInt(lastProcessed);
 				isResume = true;
 				log("  → Retomando da PR %d/%d (checkpoint encontrado)", startFrom + 1, prNumbers.size());
-			} catch (Exception e) {
+			} catch (IOException | NumberFormatException e) {
 				log("  ⚠ Erro ao ler checkpoint de reviews, iniciando do zero");
 			}
 		}
@@ -497,7 +500,7 @@ public class Mineracao {
 						
 						revUrl = parseNextLink(resp.headers()).orElse(null);
 						if (revUrl != null) {
-							Thread.sleep(50);
+							safeWait(50);
 						}
 					}
 				} catch (IOException | InterruptedException e) {
@@ -610,6 +613,18 @@ public class Mineracao {
 				.map(Map.Entry::getValue)
 				.findFirst();
 		return v.isPresent() && !v.get().isEmpty() ? v.get().get(0) : null;
+	}
+
+	/**
+	 * Método seguro para pausas que lida apropriadamente com InterruptedException.
+	 */
+	private static void safeWait(long millis) {
+		try {
+			Thread.sleep(millis);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			throw new RuntimeException("Thread foi interrompida durante espera", e);
+		}
 	}
 
 	private static void log(String fmt, Object... args) {

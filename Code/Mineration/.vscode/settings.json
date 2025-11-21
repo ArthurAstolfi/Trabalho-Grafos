@@ -1,7 +1,3 @@
-{
-    "java.project.sourcePaths": ["src"],
-    "java.project.outputPath": "bin",
-    "java.project.referencedLibraries": [
-        "lib/**/*.jar"
-    ]
-}
+version https://git-lfs.github.com/spec/v1
+oid sha256:b67b6d1103ef6d7880d105cc8299d97bacaca8002a4051988f6a62e6ea186bec
+size 161
