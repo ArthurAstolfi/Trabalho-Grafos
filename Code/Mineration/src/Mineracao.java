@@ -1,5 +1,5 @@
+import java.io.BufferedWriter;
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
@@ -11,37 +11,67 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Mineracao: utilitário simples para minerar dados públicos do GitHub.
- *
- * Etapa 1 (assumida): coletar e persistir em disco os dados brutos (JSON) de um repositório
- * para uso posterior. Este código usa somente a API REST pública do GitHub e salva as páginas
- * paginadas em arquivos na pasta "data/<owner>/<repo>/".
- *
- * Observações:
- * - Token (opcional): defina via variável de ambiente GITHUB_TOKEN para aumentar o limite de rate.
- * - Não dependemos de bibliotecas externas; apenas Java 11+ (HttpClient).
- * - Não executa nenhuma transformação de grafo nesta etapa; apenas coleta e guarda JSON.
+ * Mineracao: Minera TODO o repositório spring-projects/spring-boot e organiza automaticamente
+ * os dados em 4 categorias:
+ * 1. Comentários em issues
+ * 2. Fechamento de issues
+ * 3. Comentários em pull requests
+ * 4. Abertura, revisão, aprovação e merge de pull requests
+ * 
+ * Lê o token GITHUB_TOKEN do arquivo .env automaticamente.
  */
 public class Mineracao {
 	private static final String BASE_URL = "https://api.github.com";
 	private static final String USER_AGENT = "MineracaoGrafos/1.0 (+https://github.com/)";
 
 	private final HttpClient http;
-	private final String token; // pode ser null
+	private final String token;
 
 	public Mineracao(String token) {
 		this.http = HttpClient.newBuilder()
 				.connectTimeout(Duration.ofSeconds(20))
 				.build();
+		// Se token não foi passado, tenta ler do .env
+		if (token == null || token.isBlank()) {
+			token = loadTokenFromEnv();
+		}
 		this.token = (token == null || token.isBlank()) ? null : token.trim();
+		if (this.token != null) {
+			log("✓ Token configurado com sucesso (primeiros 10 chars: %s...)", 
+				this.token.substring(0, Math.min(10, this.token.length())));
+		} else {
+			log("⚠ AVISO: Nenhum token configurado. Rate limit será muito limitado (60 req/hora).");
+		}
+	}
+
+	/**
+	 * Carrega o GITHUB_TOKEN do arquivo .env na raiz do projeto.
+	 */
+	private static String loadTokenFromEnv() {
+		try {
+			Path envFile = Path.of(".env");
+			if (!Files.exists(envFile)) {
+				return null;
+			}
+			for (String line : Files.readAllLines(envFile, StandardCharsets.UTF_8)) {
+				line = line.trim();
+				if (line.startsWith("GITHUB_TOKEN=")) {
+					return line.substring("GITHUB_TOKEN=".length()).trim();
+				}
+			}
+		} catch (IOException e) {
+			log("Erro ao ler .env: %s", e.getMessage());
+		}
+		return null;
 	}
 
 	public record RepoId(String owner, String name) {
@@ -49,349 +79,459 @@ public class Mineracao {
 	}
 
 	/**
-	 * Minera um conjunto padrão de endpoints de um repositório e salva em disco.
-	 *
-	 * Endpoints coletados:
-	 * - repo (metadados)
-	 * - commits (paginado)
-	 * - contributors (paginado)
-	 * - issues?state=all (paginado)
-	 * - pulls?state=all (paginado)
-	 * - branches (paginado)
-	 * - tags (paginado)
+	 * Minera TODO o repositório sem limites e organiza automaticamente em 4 categorias:
+	 * 1. Comentários em issues
+	 * 2. Fechamento de issues
+	 * 3. Comentários em pull requests
+	 * 4. Abertura, revisão, aprovação e merge de pull requests
 	 */
 	public void mineRepository(RepoId repo, Path outRoot) throws IOException, InterruptedException {
 		Objects.requireNonNull(repo, "repo");
 		Objects.requireNonNull(outRoot, "outRoot");
 
-		Path outDir = outRoot.resolve(repo.owner()).resolve(repo.name());
+		Path outDir = outRoot;
 		Files.createDirectories(outDir);
 
-		log("Iniciando mineração de %s...", repo.toPath());
+		log("=".repeat(70));
+		log("Iniciando mineração COMPLETA de %s", repo.toPath());
+		log("Diretório de saída: %s", outDir.toAbsolutePath());
+		log("=".repeat(70));
 
-		// Repo metadata (não paginado)
-		fetchSingle(BASE_URL + "/repos/" + repo.toPath(), outDir.resolve("repo.json"));
-
-	// Paginated collections (geral)
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/commits?per_page=100", outDir, "commits");
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/contributors?per_page=100&anon=1", outDir, "contributors");
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/issues?state=all&per_page=100", outDir, "issues");
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/pulls?state=all&per_page=100", outDir, "pulls");
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/branches?per_page=100", outDir, "branches");
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/tags?per_page=100", outDir, "tags");
-
-	// Consolidação em arquivos únicos (JSON arrays)
-	consolidatePages(outDir, "commits", "commits.json");
-	consolidatePages(outDir, "contributors", "contributors.json");
-	consolidatePages(outDir, "issues", "issues.json");
-	consolidatePages(outDir, "pulls", "pulls.json");
-	consolidatePages(outDir, "branches", "branches.json");
-	consolidatePages(outDir, "tags", "tags.json");
-
-	// Foco nas interações usuário-usuário
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/issues/comments?per_page=100", outDir, "issue-comments");
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/issues/events?per_page=100", outDir, "issue-events");
-	fetchPaginated(BASE_URL + "/repos/" + repo.toPath() + "/pulls/comments?per_page=100", outDir, "pr-review-comments");
-
-	consolidatePages(outDir, "issue-comments", "issue-comments.json");
-	consolidatePages(outDir, "issue-events", "issue-events.json");
-	consolidatePages(outDir, "pr-review-comments", "pr-review-comments.json");
-
-	// Detalhes por PR (inclui merged_by) + reviews por PR
-	fetchPerPullDetailsAndReviews(repo, outDir);
-
-	// Consolida pull.json e reviews.json individuais em arrays maiores
-	consolidatePerPull(outDir);
-
-		log("Mineração concluída para %s. Arquivos em: %s", repo.toPath(), outDir.toAbsolutePath());
-	}
-
-	/**
-	 * Lê as páginas já baixadas de "pulls-*.json", extrai os números das PRs e
-	 * busca os detalhes e as reviews de cada PR individualmente.
-	 */
-	private void fetchPerPullDetailsAndReviews(RepoId repo, Path outDir) throws IOException, InterruptedException {
-		Path pullsDir = outDir; // arquivos pulls-*.json estão no próprio outDir
-		List<Integer> prNumbers = new ArrayList<>();
-
-		// Listar arquivos pulls-*.json
-		try (java.util.stream.Stream<Path> stream = Files.list(pullsDir)) {
-			stream.filter(p -> p.getFileName().toString().startsWith("pulls-") && p.getFileName().toString().endsWith(".json"))
-				  .sorted()
-				  .forEach(p -> {
-					  try {
-						  String json = Files.readString(p, StandardCharsets.UTF_8);
-						  prNumbers.addAll(extractPrNumbers(json));
-					  } catch (IOException e) {
-						  throw new UncheckedIOException(e);
-					  }
-				  });
+		// Passo 1: Minerar comentários em issues
+		Path issueCommentsFile = outDir.resolve("1-comentarios-issues.json");
+		if (Files.exists(issueCommentsFile) && Files.size(issueCommentsFile) > 1000) {
+			log("\n[1/4] Comentários em issues → ✓ JÁ EXISTE (%.1f MB), pulando...", 
+				Files.size(issueCommentsFile) / 1024.0 / 1024.0);
+		} else {
+			log("\n[1/4] Minerando COMENTÁRIOS EM ISSUES...");
+			fetchAndConsolidateAll(
+				BASE_URL + "/repos/" + repo.toPath() + "/issues/comments?per_page=100",
+				issueCommentsFile,
+				"comentários em issues"
+			);
 		}
 
-		if (prNumbers.isEmpty()) {
-			log("Nenhum número de PR encontrado para detalhes/reviews.");
-			return;
-		}
-
-		Path perPullRoot = outDir.resolve("pulls");
-		Files.createDirectories(perPullRoot);
-
-		for (Integer n : prNumbers) {
-			Path prDir = perPullRoot.resolve(String.valueOf(n));
-			Files.createDirectories(prDir);
-
-			// Detalhe da PR (inclui merged_by)
-			String prUrl = BASE_URL + "/repos/" + repo.toPath() + "/pulls/" + n;
-			Path prDetail = prDir.resolve("pull.json");
-			if (!Files.exists(prDetail)) {
-				// Alguns PRs muito antigos podem não existir mais ou retornarem 404 — ignore nesses casos
-				if (!fetchSingleAllow404(prUrl, prDetail)) {
-					log("PR %d: detalhe 404 (ignorado)", n);
-					// Sem detalhe, ainda podemos tentar reviews? Em geral 404 também.
-				}
+		// Passo 2: Minerar eventos de issues e filtrar fechamentos
+		Path closedIssuesFile = outDir.resolve("2-fechamentos-issues.json");
+		if (Files.exists(closedIssuesFile) && Files.size(closedIssuesFile) > 100) {
+			log("\n[2/4] Fechamentos de issues → ✓ JÁ EXISTE (%.1f MB), pulando...", 
+				Files.size(closedIssuesFile) / 1024.0 / 1024.0);
+		} else {
+			log("\n[2/4] Minerando FECHAMENTOS DE ISSUES...");
+			Path issueEventsTemp = outDir.resolve("_temp_issue-events.json");
+			
+			// Só minerar se não tiver checkpoint completo
+			if (!Files.exists(issueEventsTemp) || Files.size(issueEventsTemp) < 1000) {
+				fetchAndConsolidateAll(
+					BASE_URL + "/repos/" + repo.toPath() + "/issues/events?per_page=100",
+					issueEventsTemp,
+					"eventos de issues"
+				);
 			} else {
-				log("PR %d: detalhe já existe, pulando.", n);
+				log("  → Usando arquivo existente (já minerado)");
 			}
+			
+			// Filtrar apenas eventos de fechamento
+			if (!Files.exists(closedIssuesFile) || Files.size(closedIssuesFile) < 100) {
+				filterClosedEvents(issueEventsTemp, closedIssuesFile);
+			} else {
+				log("  → Arquivo de fechamentos já existe, pulando filtro");
+			}
+			Files.deleteIfExists(issueEventsTemp); // Limpar arquivo temporário
+		}
 
-			// Reviews da PR (para aprovações/reviews)
-			String reviewsUrl = BASE_URL + "/repos/" + repo.toPath() + "/pulls/" + n + "/reviews?per_page=100";
+		// Passo 3: Minerar comentários em pull requests
+		Path prCommentsFile = outDir.resolve("3-comentarios-prs.json");
+		if (Files.exists(prCommentsFile) && Files.size(prCommentsFile) > 1000) {
+			log("\n[3/4] Comentários em PRs → ✓ JÁ EXISTE (%.1f MB), pulando...", 
+				Files.size(prCommentsFile) / 1024.0 / 1024.0);
+		} else {
+			log("\n[3/4] Minerando COMENTÁRIOS EM PULL REQUESTS...");
+			fetchAndConsolidateAll(
+				BASE_URL + "/repos/" + repo.toPath() + "/pulls/comments?per_page=100",
+				prCommentsFile,
+				"comentários em PRs"
+			);
+		}
+
+		// Passo 4: Minerar PRs completas (abertura, merge, etc) e suas reviews
+		log("\n[4/4] Minerando INTERAÇÕES EM PULL REQUESTS (abertura, revisão, aprovação, merge)...");
+		Path prInteractionsFile = outDir.resolve("4-interacoes-prs.json");
+		fetchPullRequestsWithReviews(repo, prInteractionsFile);
+
+		log("\n" + "=".repeat(70));
+		log("✓ MINERAÇÃO COMPLETA CONCLUÍDA!");
+		log("=".repeat(70));
+		log("\nArquivos gerados:");
+		log("  1. %s (%.1f MB) - Comentários em issues",
+			issueCommentsFile.getFileName(), Files.size(issueCommentsFile) / 1024.0 / 1024.0);
+		log("  2. %s (%.1f MB) - Fechamentos de issues",
+			closedIssuesFile.getFileName(), Files.size(closedIssuesFile) / 1024.0 / 1024.0);
+		log("  3. %s (%.1f MB) - Comentários em PRs",
+			prCommentsFile.getFileName(), Files.size(prCommentsFile) / 1024.0 / 1024.0);
+		log("  4. %s (%.1f MB) - Interações em PRs",
+			prInteractionsFile.getFileName(), Files.size(prInteractionsFile) / 1024.0 / 1024.0);
+		log("\nDiretório: %s\n", outDir.toAbsolutePath());
+	}
+
+	/**
+	 * Minera TODAS as páginas de um endpoint e consolida diretamente em um único arquivo.
+	 * SALVA INCREMENTALMENTE a cada página e pode RETOMAR de onde parou.
+	 */
+	private void fetchAndConsolidateAll(String firstUrl, Path outputFile, String description) 
+			throws IOException, InterruptedException {
+		log("  Minerando todas as páginas de %s...", description);
+		log("  Salvando em: %s", outputFile.getFileName());
+		
+		// Diretório para checkpoints
+		Path checkpointDir = outputFile.getParent().resolve(".checkpoints");
+		Files.createDirectories(checkpointDir);
+		Path checkpointFile = checkpointDir.resolve(outputFile.getFileName() + ".checkpoint");
+		
+		// Verificar se existe checkpoint anterior
+		int startPage = 1;
+		String resumeUrl = firstUrl;
+		boolean isResume = false;
+		
+		if (Files.exists(checkpointFile) && Files.exists(outputFile)) {
 			try {
-				fetchPaginated(reviewsUrl, prDir, "reviews");
-				consolidatePages(prDir, "reviews", "reviews.json");
-			} catch (RuntimeException ex) {
-				String msg = ex.getMessage();
-				if (msg != null && msg.contains("Falha HTTP 404")) {
-					log("PR %d: reviews 404 (ignorado)", n);
-				} else {
-					throw ex;
+				String checkpoint = Files.readString(checkpointFile, StandardCharsets.UTF_8).trim();
+				String[] parts = checkpoint.split("\\|");
+				if (parts.length == 2) {
+					startPage = Integer.parseInt(parts[0]);
+					resumeUrl = parts[1];
+					isResume = true;
+					log("  → Retomando da página %d (checkpoint encontrado)", startPage);
 				}
+			} catch (Exception e) {
+				log("  ⚠ Erro ao ler checkpoint, iniciando do zero");
+				isResume = false;
 			}
 		}
+		
+		int page = startPage;
+		String url = resumeUrl;
+		int totalItems = 0;
+
+		// Abrir arquivo para escrita (APPEND se for retomada, CREATE caso contrário)
+		try (BufferedWriter writer = Files.newBufferedWriter(outputFile, StandardCharsets.UTF_8,
+				isResume ? StandardOpenOption.APPEND : StandardOpenOption.CREATE, 
+				StandardOpenOption.TRUNCATE_EXISTING)) {
+			
+			if (!isResume) {
+				writer.write('['); // Abrir array JSON apenas se for novo
+			}
+			
+			while (url != null) {
+				log("    Página %d...", page);
+				
+				try {
+					HttpRequest req = baseRequest(URI.create(url)).GET().build();
+					HttpResponse<String> resp = send(req);
+					ensureSuccess(resp);
+					
+					String content = resp.body().trim();
+					if (!content.isEmpty()) {
+						// Extrair conteúdo do array
+						int openBracket = content.indexOf('[');
+						int closeBracket = content.lastIndexOf(']');
+						if (openBracket >= 0 && closeBracket > openBracket) {
+							String inside = content.substring(openBracket + 1, closeBracket).trim();
+							if (!inside.isEmpty()) {
+								// Adicionar vírgula se não for primeira página
+								if (page > 1) {
+									writer.write(',');
+								}
+								writer.write(inside);
+								writer.flush(); // Forçar escrita no disco
+								
+								// Contar itens
+								int itemsInPage = countJsonObjects(inside);
+								totalItems += itemsInPage;
+								log("      → Salvos %d itens (total: ~%d)", itemsInPage, totalItems);
+							}
+						}
+					}
+					
+					rateLimitLog(resp.headers());
+					String nextUrl = parseNextLink(resp.headers()).orElse(null);
+					
+					// Salvar checkpoint ANTES de avançar
+					if (nextUrl != null) {
+						Files.writeString(checkpointFile, (page + 1) + "|" + nextUrl, 
+							StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+					}
+					
+					url = nextUrl;
+					page++;
+					
+					// Pequena pausa para evitar rate limiting
+					if (url != null) {
+						Thread.sleep(100);
+					}
+					
+				} catch (Exception e) {
+					log("  ✗ Erro na página %d: %s", page, e.getMessage());
+					log("  → Checkpoint salvo, você pode retomar com: java -cp bin App");
+					throw e;
+				}
+			}
+			
+			writer.write(']'); // Fechar array JSON
+			
+			// Limpar checkpoint ao concluir com sucesso
+			Files.deleteIfExists(checkpointFile);
+		}
+
+		log("  ✓ Concluído: %d páginas, ~%d itens salvos em %s", 
+			page - 1, totalItems, outputFile.getFileName());
+	}
+	
+	/**
+	 * Conta objetos JSON em uma string de forma mais precisa.
+	 */
+	private int countJsonObjects(String json) {
+		int count = 0;
+		int depth = 0;
+		boolean inString = false;
+		char prev = 0;
+		
+		for (char c : json.toCharArray()) {
+			if (c == '"' && prev != '\\') {
+				inString = !inString;
+			}
+			if (!inString) {
+				if (c == '{') {
+					if (depth == 0) count++;
+					depth++;
+				} else if (c == '}') {
+					depth--;
+				}
+			}
+			prev = c;
+		}
+		return count;
 	}
 
 	/**
-	 * Consolida todos os pull.json e reviews.json em arquivos únicos:
-	 *  - pull-details.json : array de objetos de cada PR (pull.json)
-	 *  - pull-reviews.json : array concatenando todos os arrays de reviews.json
+	 * Filtra apenas eventos de fechamento ("closed") do arquivo de eventos de issues.
 	 */
-	private void consolidatePerPull(Path outDir) {
-		Path pullsRoot = outDir.resolve("pulls");
-		if (!Files.isDirectory(pullsRoot)) return;
-		List<String> pullDetails = new ArrayList<>();
-		List<String> allReviews = new ArrayList<>();
-		try (java.util.stream.Stream<Path> stream = Files.walk(pullsRoot, 1)) {
-			stream.filter(Files::isDirectory).forEach(prDir -> {
-				if (prDir.equals(pullsRoot)) return; // raiz
-				Path pullJson = prDir.resolve("pull.json");
-				if (Files.exists(pullJson)) {
-					try { pullDetails.add(Files.readString(pullJson, StandardCharsets.UTF_8).trim()); } catch (IOException e) { throw new UncheckedIOException(e); }
+	private void filterClosedEvents(Path inputFile, Path outputFile) throws IOException {
+		log("  Filtrando eventos de fechamento...");
+		
+		String content = Files.readString(inputFile, StandardCharsets.UTF_8);
+		List<String> closedEvents = new ArrayList<>();
+		
+		// Procura por objetos JSON que contêm "event":"closed"
+		// Usa uma estratégia mais robusta: encontra objetos completos
+		int depth = 0;
+		int start = -1;
+		boolean inString = false;
+		char prevChar = 0;
+		
+		for (int i = 0; i < content.length(); i++) {
+			char c = content.charAt(i);
+			
+			// Detectar strings (ignorar chaves dentro de strings)
+			if (c == '"' && prevChar != '\\') {
+				inString = !inString;
+			}
+			
+			if (!inString) {
+				if (c == '{') {
+					if (depth == 0) {
+						start = i;
+					}
+					depth++;
+				} else if (c == '}') {
+					depth--;
+					if (depth == 0 && start >= 0) {
+						// Objeto completo encontrado
+						String obj = content.substring(start, i + 1);
+						if (obj.contains("\"event\"") && obj.contains("\"closed\"")) {
+							closedEvents.add(obj);
+						}
+						start = -1;
+					}
 				}
-				Path reviewsJson = prDir.resolve("reviews.json");
-				if (Files.exists(reviewsJson)) {
-					try {
-						String raw = Files.readString(reviewsJson, StandardCharsets.UTF_8).trim();
-						// remover colchetes externos e separar elementos
-						int iOpen = raw.indexOf('['); int iClose = raw.lastIndexOf(']');
-						String inside = (iOpen >=0 && iClose > iOpen) ? raw.substring(iOpen+1, iClose).trim() : raw;
-						if (!inside.isEmpty()) allReviews.add(inside);
-					} catch (IOException e) { throw new UncheckedIOException(e); }
-				}
-			});
-		} catch (IOException e) { throw new UncheckedIOException(e); }
+			}
+			prevChar = c;
+		}
 
-		// Escreve pull-details.json
-		if (!pullDetails.isEmpty()) {
-			Path outDetails = outDir.resolve("pull-details.json");
-			try (java.io.BufferedWriter w = Files.newBufferedWriter(outDetails, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-				w.write('[');
-				boolean first = true;
-				for (String obj : pullDetails) {
-					String s = obj.trim();
-					if (s.isEmpty()) continue;
-					if (!first) w.write(',');
-					w.write(s);
-					first = false;
-				}
-				w.write(']');
-			} catch (IOException e) { throw new UncheckedIOException(e); }
-			log("Consolidado pull-details.json (%d PRs)", pullDetails.size());
-		}
-		// Escreve pull-reviews.json
-		if (!allReviews.isEmpty()) {
-			Path outReviews = outDir.resolve("pull-reviews.json");
-			try (java.io.BufferedWriter w = Files.newBufferedWriter(outReviews, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-				w.write('[');
-				boolean first = true;
-				for (String chunk : allReviews) {
-					String s = chunk.trim();
-					if (s.isEmpty()) continue;
-					// Cada chunk já é lista de objetos separados por vírgula
-					// Se não for primeiro, garantir vírgula
-					if (!first) w.write(',');
-					w.write(s);
-					first = false;
-				}
-				w.write(']');
-			} catch (IOException e) { throw new UncheckedIOException(e); }
-			log("Consolidado pull-reviews.json (%d blocos)", allReviews.size());
-		}
-	}
-
-	/**
-	 * Variante de fetchSingle que ignora 404 e retorna false nesses casos.
-	 */
-	private boolean fetchSingleAllow404(String url, Path outFile) throws IOException, InterruptedException {
-		HttpRequest request = baseRequest(URI.create(url)).GET().build();
-		HttpResponse<String> resp = send(request);
-		int code = resp.statusCode();
-		if (code == 404) {
-			return false;
-		}
-		ensureSuccess(resp);
-		write(outFile, resp.body());
-		rateLimitLog(resp.headers());
-		return true;
-	}
-
-	/**
-	 * Extração simples (best-effort) dos números de PRs a partir do JSON de lista de PRs.
-	 * Evita dependências externas. A ordem e formato do JSON do GitHub costumam trazer o
-	 * campo "number" no nível superior de cada objeto PR.
-	 */
-	private static List<Integer> extractPrNumbers(String pullsListJson) {
-		List<Integer> nums = new ArrayList<>();
-		// Regex simples: "number" : 123,
-	String regex = "\\\"number\\\"\\s*:\\s*(\\d+)";
-		java.util.regex.Pattern p = java.util.regex.Pattern.compile(regex);
-		java.util.regex.Matcher m = p.matcher(pullsListJson);
-		while (m.find()) {
-			try {
-				int n = Integer.parseInt(m.group(1));
-				// Evitar capturar números de objetos aninhados extremamente raros (heurística):
-				// vamos aceitar e deduplicar abaixo.
-				nums.add(n);
-			} catch (NumberFormatException ignored) {}
-		}
-		// Deduplicar mantendo ordem de primeira ocorrência
-		List<Integer> dedup = new ArrayList<>();
-		for (Integer n : nums) {
-			if (!dedup.contains(n)) dedup.add(n);
-		}
-		return dedup;
-	}
-
-	/**
-	 * Consolida páginas baseName-*.json em um único arquivo JSON array (outputFileName).
-	 * Não faz parsing completo: concatena os elementos dos arrays de cada página, preservando ordem por número da página.
-	 */
-	private static void consolidatePages(Path dir, String baseName, String outputFileName) {
-		List<Path> pages;
-		try { pages = listPageFiles(dir, baseName); } catch (IOException e) { throw new UncheckedIOException(e); }
-		if (pages.isEmpty()) return;
-		Path out = dir.resolve(outputFileName);
-		try (java.io.BufferedWriter w = Files.newBufferedWriter(out, StandardCharsets.UTF_8,
+		// Escrever arquivo com fechamentos
+		try (BufferedWriter writer = Files.newBufferedWriter(outputFile, StandardCharsets.UTF_8,
 				StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
-			w.write('[');
-			boolean first = true;
-			for (Path p : pages) {
-				String s = Files.readString(p, StandardCharsets.UTF_8).trim();
-				if (s.isEmpty()) continue;
-				int iOpen = s.indexOf('[');
-				int iClose = s.lastIndexOf(']');
-				String inside;
-				if (iOpen >= 0 && iClose > iOpen) {
-					inside = s.substring(iOpen + 1, iClose).trim();
-				} else {
-					inside = s;
-				}
-				if (inside.isEmpty()) continue;
-				if (!first) w.write(',');
-				w.write(inside);
-				first = false;
+			writer.write('[');
+			for (int i = 0; i < closedEvents.size(); i++) {
+				if (i > 0) writer.write(',');
+				writer.write(closedEvents.get(i));
 			}
-			w.write(']');
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
+			writer.write(']');
 		}
-		log("Consolidado %s -> %s", baseName, out.getFileName());
+
+		log("  ✓ Encontrados %d eventos de fechamento", closedEvents.size());
 	}
 
-	private static List<Path> listPageFiles(Path dir, String baseName) throws IOException {
-		List<Path> files = new ArrayList<>();
-		try (java.util.stream.Stream<Path> stream = Files.list(dir)) {
-			stream.filter(p -> {
-						String n = p.getFileName().toString();
-						return n.startsWith(baseName + "-") && n.endsWith(".json");
-					})
-				  .forEach(files::add);
-		}
-		files.sort(Comparator.comparingInt(p -> extractPageNumber(p.getFileName().toString(), baseName)));
-		return files;
-	}
-
-	private static int extractPageNumber(String fileName, String baseName) {
-		// Ex.: baseName-12.json -> 12
-		try {
-			String withoutPrefix = fileName.substring((baseName + "-").length());
-			int dot = withoutPrefix.indexOf('.');
-			String numStr = dot >= 0 ? withoutPrefix.substring(0, dot) : withoutPrefix;
-			return Integer.parseInt(numStr);
-		} catch (Exception ignored) {
-			return Integer.MAX_VALUE; // arquivos sem número vão para o fim
-		}
-	}
-
-	private void fetchSingle(String url, Path outFile) throws IOException, InterruptedException {
-		HttpRequest request = baseRequest(URI.create(url)).GET().build();
-		HttpResponse<String> resp = send(request);
-		ensureSuccess(resp);
-		write(outFile, resp.body());
-		rateLimitLog(resp.headers());
-	}
-
-	private void fetchPaginated(String firstUrl, Path outDir, String baseName) throws IOException, InterruptedException {
+	/**
+	 * Minera todas as PRs com seus detalhes completos (merge, reviews, aprovações).
+	 * SALVA INCREMENTALMENTE com checkpoint para retomar.
+	 */
+	private void fetchPullRequestsWithReviews(RepoId repo, Path outputFile) 
+			throws IOException, InterruptedException {
+		log("  Minerando lista de pull requests...");
+		
+		// Checkpoint para reviews
+		Path checkpointDir = outputFile.getParent().resolve(".checkpoints");
+		Files.createDirectories(checkpointDir);
+		Path reviewCheckpoint = checkpointDir.resolve("reviews.checkpoint");
+		
+		// Primeiro, obter lista de todas as PRs
+		List<String> allPRs = new ArrayList<>();
+		List<Integer> prNumbers = new ArrayList<>();
+		String url = BASE_URL + "/repos/" + repo.toPath() + "/pulls?state=all&per_page=100";
 		int page = 1;
-		String url = firstUrl;
 
-		// Resume: se já existirem páginas, começa da próxima
-		int maxExisting = maxExistingPage(outDir, baseName);
-		if (maxExisting > 0) {
-			page = maxExisting + 1;
-			url = setPageParam(firstUrl, page);
-			log("Resuming %s a partir da página %d...", baseName, page);
-		}
 		while (url != null) {
-			log("Baixando %s (página %d)...", baseName, page);
+			log("    Página %d de PRs...", page);
+			
 			HttpRequest req = baseRequest(URI.create(url)).GET().build();
 			HttpResponse<String> resp = send(req);
 			ensureSuccess(resp);
-
-			Path outFile = outDir.resolve(baseName + "-" + page + ".json");
-			write(outFile, resp.body());
+			
+			String content = resp.body().trim();
+			if (!content.isEmpty()) {
+				int openBracket = content.indexOf('[');
+				int closeBracket = content.lastIndexOf(']');
+				if (openBracket >= 0 && closeBracket > openBracket) {
+					String inside = content.substring(openBracket + 1, closeBracket).trim();
+					if (!inside.isEmpty()) {
+						allPRs.add(inside);
+						// Extrair números das PRs
+						Pattern numPattern = Pattern.compile("\"number\"\\s*:\\s*(\\d+)");
+						Matcher numMatcher = numPattern.matcher(inside);
+						while (numMatcher.find()) {
+							int num = Integer.parseInt(numMatcher.group(1));
+							if (!prNumbers.contains(num)) {
+								prNumbers.add(num);
+							}
+						}
+					}
+				}
+			}
+			
 			rateLimitLog(resp.headers());
-
 			url = parseNextLink(resp.headers()).orElse(null);
 			page++;
+			if (url != null) {
+				Thread.sleep(100);
+			}
 		}
-	}
 
-	private static int maxExistingPage(Path dir, String baseName) {
-		try {
-			List<Path> pages = listPageFiles(dir, baseName);
-			if (pages.isEmpty()) return 0;
-			Path last = pages.get(pages.size() - 1);
-			return extractPageNumber(last.getFileName().toString(), baseName);
-		} catch (IOException e) {
-			return 0;
+		log("  ✓ Encontradas %d pull requests", prNumbers.size());
+		
+		// Verificar checkpoint de reviews processadas
+		int startFrom = 0;
+		boolean isResume = false;
+		if (Files.exists(reviewCheckpoint) && Files.exists(outputFile)) {
+			try {
+				String lastProcessed = Files.readString(reviewCheckpoint, StandardCharsets.UTF_8).trim();
+				startFrom = Integer.parseInt(lastProcessed);
+				isResume = true;
+				log("  → Retomando da PR %d/%d (checkpoint encontrado)", startFrom + 1, prNumbers.size());
+			} catch (Exception e) {
+				log("  ⚠ Erro ao ler checkpoint de reviews, iniciando do zero");
+			}
 		}
-	}
+		
+		log("  Minerando reviews de cada PR (isso pode demorar)...");
 
-	private static String setPageParam(String url, int page) {
-		if (url.contains("page=")) {
-			return url.replaceAll("([?&])page=\\d+", "$1page=" + page);
+		// Abrir arquivo para escrita incremental
+		try (BufferedWriter writer = Files.newBufferedWriter(outputFile, StandardCharsets.UTF_8,
+				isResume ? StandardOpenOption.APPEND : StandardOpenOption.CREATE,
+				StandardOpenOption.TRUNCATE_EXISTING)) {
+			
+			if (!isResume) {
+				writer.write('[');
+				// Escrever todas as PRs primeiro
+				for (int i = 0; i < allPRs.size(); i++) {
+					if (i > 0) writer.write(',');
+					writer.write(allPRs.get(i));
+				}
+				writer.flush();
+			}
+			
+			// Processar reviews de cada PR
+			for (int i = startFrom; i < prNumbers.size(); i++) {
+				Integer prNum = prNumbers.get(i);
+				
+				if ((i + 1) % 100 == 0 || (i + 1) == prNumbers.size()) {
+					log("    Progresso: %d/%d PRs processadas...", i + 1, prNumbers.size());
+				}
+				
+				// Buscar reviews desta PR
+				String reviewsUrl = BASE_URL + "/repos/" + repo.toPath() + "/pulls/" + prNum + "/reviews?per_page=100";
+				List<String> reviews = new ArrayList<>();
+				
+				try {
+					String revUrl = reviewsUrl;
+					while (revUrl != null) {
+						HttpRequest req = baseRequest(URI.create(revUrl)).GET().build();
+						HttpResponse<String> resp = send(req);
+						
+						if (resp.statusCode() == 404) {
+							break; // PR sem reviews ou não encontrada
+						}
+						ensureSuccess(resp);
+						
+						String revContent = resp.body().trim();
+						if (!revContent.isEmpty()) {
+							int openBracket = revContent.indexOf('[');
+							int closeBracket = revContent.lastIndexOf(']');
+							if (openBracket >= 0 && closeBracket > openBracket) {
+								String inside = revContent.substring(openBracket + 1, closeBracket).trim();
+								if (!inside.isEmpty()) {
+									reviews.add(inside);
+								}
+							}
+						}
+						
+						revUrl = parseNextLink(resp.headers()).orElse(null);
+						if (revUrl != null) {
+							Thread.sleep(50);
+						}
+					}
+				} catch (IOException | InterruptedException e) {
+					// Se for erro de rate limit, salvar checkpoint e re-lançar
+					if (e.getMessage() != null && e.getMessage().contains("403")) {
+						Files.writeString(reviewCheckpoint, String.valueOf(i), StandardCharsets.UTF_8);
+						log("  ✗ Rate limit atingido na PR %d/%d", i + 1, prNumbers.size());
+						log("  → Checkpoint salvo. Execute novamente após reset do rate limit.");
+						throw e;
+					}
+					// Outros erros: ignorar esta PR específica
+				}
+				
+				// Salvar review incrementalmente se houver
+				if (!reviews.isEmpty()) {
+					String reviewsJson = String.join(",", reviews);
+					writer.write(',');
+					writer.write(String.format("{\"pr_number\":%d,\"reviews\":[%s]}", prNum, reviewsJson));
+					writer.flush();
+				}
+				
+				// Atualizar checkpoint a cada 50 PRs
+				if ((i + 1) % 50 == 0) {
+					Files.writeString(reviewCheckpoint, String.valueOf(i + 1), StandardCharsets.UTF_8);
+				}
+			}
+			
+			writer.write(']');
+			
+			// Limpar checkpoint ao concluir
+			Files.deleteIfExists(reviewCheckpoint);
 		}
-		String sep = url.contains("?") ? "&" : "?";
-		return url + sep + "page=" + page;
+
+		log("  ✓ Consolidadas %d PRs com reviews", prNumbers.size());
 	}
 
 	private HttpRequest.Builder baseRequest(URI uri) {
@@ -400,7 +540,6 @@ public class Mineracao {
 				.header("Accept", "application/vnd.github+json")
 				.header("User-Agent", USER_AGENT);
 		if (token != null) {
-			// GitHub PATs tradicionais usam prefixo 'token'. Fine-grained também aceitam 'Bearer', mas 'token' garante compatibilidade.
 			b.header("Authorization", "token " + token);
 		}
 		return b;
@@ -429,15 +568,6 @@ public class Mineracao {
 		return b == null ? "<sem corpo>" : String.valueOf(b);
 	}
 
-	private static void write(Path file, String content) {
-		try {
-			Files.createDirectories(file.getParent());
-			Files.writeString(file, content, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
-		}
-	}
-
 	private static Optional<String> parseNextLink(HttpHeaders headers) {
 		Optional<List<String>> values = headers.map().entrySet().stream()
 				.filter(e -> e.getKey().equalsIgnoreCase("link"))
@@ -445,7 +575,6 @@ public class Mineracao {
 				.findFirst();
 		if (values.isEmpty()) return Optional.empty();
 		for (String full : values.get()) {
-			// Formato: <https://api.github.com/...&page=2>; rel="next", <...>; rel="last"
 			String[] parts = full.split(",");
 			for (String p : parts) {
 				String s = p.trim();
@@ -469,7 +598,7 @@ public class Mineracao {
 		String limit = headerValue(headers, "x-ratelimit-limit");
 		String reset = headerValue(headers, "x-ratelimit-reset");
 		if (remaining != null && limit != null) {
-			log("Rate limit: %s/%s restante(s)%s",
+			log("    Rate limit: %s/%s restante(s)%s",
 					remaining, limit,
 					reset != null ? (" (reset: " + reset + ")") : "");
 		}
