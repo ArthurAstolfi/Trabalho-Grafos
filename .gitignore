@@ -1,3 +1,26 @@
-Code/Mineration/src/data/
+# Ignora páginas brutas e artefatos de build
 Code/Mineration/src/*.class
 .env
+
+# Ignorar tudo dentro de data
+Code/Mineration/src/data/*
+
+# Re-incluir somente arquivos consolidados essenciais
+!Code/Mineration/src/data/repo.json
+!Code/Mineration/src/data/issues.json
+!Code/Mineration/src/data/issue-comments.json
+!Code/Mineration/src/data/issue-events.json
+!Code/Mineration/src/data/pulls.json
+!Code/Mineration/src/data/pr-review-comments.json
+!Code/Mineration/src/data/pull-details.json
+!Code/Mineration/src/data/pull-reviews.json
+!Code/Mineration/src/data/commits.json
+!Code/Mineration/src/data/contributors.json
+!Code/Mineration/src/data/branches.json
+!Code/Mineration/src/data/tags.json
+
+# Grafos gerados
+!Code/Mineration/src/data/*/graphs/*.csv
+
+# Mantém scripts
+!Code/Mineration/src/scripts/**
