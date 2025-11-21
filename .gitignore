@@ -1,5 +1,6 @@
 # Ignora páginas brutas e artefatos de build
-Code/Mineration/src/*.class
+Code/Mineration/src/**/*.class
+Code/Mineration/bin/
 .env
 
 # Ignorar tudo dentro de data

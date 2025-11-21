@@ -11,8 +11,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
@@ -100,6 +100,9 @@ public class Mineracao {
 	// Detalhes por PR (inclui merged_by) + reviews por PR
 	fetchPerPullDetailsAndReviews(repo, outDir);
 
+	// Consolida pull.json e reviews.json individuais em arrays maiores
+	consolidatePerPull(outDir);
+
 		log("Mineração concluída para %s. Arquivos em: %s", repo.toPath(), outDir.toAbsolutePath());
 	}
 
@@ -163,6 +166,74 @@ public class Mineracao {
 					throw ex;
 				}
 			}
+		}
+	}
+
+	/**
+	 * Consolida todos os pull.json e reviews.json em arquivos únicos:
+	 *  - pull-details.json : array de objetos de cada PR (pull.json)
+	 *  - pull-reviews.json : array concatenando todos os arrays de reviews.json
+	 */
+	private void consolidatePerPull(Path outDir) {
+		Path pullsRoot = outDir.resolve("pulls");
+		if (!Files.isDirectory(pullsRoot)) return;
+		List<String> pullDetails = new ArrayList<>();
+		List<String> allReviews = new ArrayList<>();
+		try (java.util.stream.Stream<Path> stream = Files.walk(pullsRoot, 1)) {
+			stream.filter(Files::isDirectory).forEach(prDir -> {
+				if (prDir.equals(pullsRoot)) return; // raiz
+				Path pullJson = prDir.resolve("pull.json");
+				if (Files.exists(pullJson)) {
+					try { pullDetails.add(Files.readString(pullJson, StandardCharsets.UTF_8).trim()); } catch (IOException e) { throw new UncheckedIOException(e); }
+				}
+				Path reviewsJson = prDir.resolve("reviews.json");
+				if (Files.exists(reviewsJson)) {
+					try {
+						String raw = Files.readString(reviewsJson, StandardCharsets.UTF_8).trim();
+						// remover colchetes externos e separar elementos
+						int iOpen = raw.indexOf('['); int iClose = raw.lastIndexOf(']');
+						String inside = (iOpen >=0 && iClose > iOpen) ? raw.substring(iOpen+1, iClose).trim() : raw;
+						if (!inside.isEmpty()) allReviews.add(inside);
+					} catch (IOException e) { throw new UncheckedIOException(e); }
+				}
+			});
+		} catch (IOException e) { throw new UncheckedIOException(e); }
+
+		// Escreve pull-details.json
+		if (!pullDetails.isEmpty()) {
+			Path outDetails = outDir.resolve("pull-details.json");
+			try (java.io.BufferedWriter w = Files.newBufferedWriter(outDetails, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+				w.write('[');
+				boolean first = true;
+				for (String obj : pullDetails) {
+					String s = obj.trim();
+					if (s.isEmpty()) continue;
+					if (!first) w.write(',');
+					w.write(s);
+					first = false;
+				}
+				w.write(']');
+			} catch (IOException e) { throw new UncheckedIOException(e); }
+			log("Consolidado pull-details.json (%d PRs)", pullDetails.size());
+		}
+		// Escreve pull-reviews.json
+		if (!allReviews.isEmpty()) {
+			Path outReviews = outDir.resolve("pull-reviews.json");
+			try (java.io.BufferedWriter w = Files.newBufferedWriter(outReviews, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)) {
+				w.write('[');
+				boolean first = true;
+				for (String chunk : allReviews) {
+					String s = chunk.trim();
+					if (s.isEmpty()) continue;
+					// Cada chunk já é lista de objetos separados por vírgula
+					// Se não for primeiro, garantir vírgula
+					if (!first) w.write(',');
+					w.write(s);
+					first = false;
+				}
+				w.write(']');
+			} catch (IOException e) { throw new UncheckedIOException(e); }
+			log("Consolidado pull-reviews.json (%d blocos)", allReviews.size());
 		}
 	}
 
