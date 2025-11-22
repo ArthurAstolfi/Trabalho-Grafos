@@ -47,19 +47,32 @@ public class BuildGraphs {
         System.out.println("[BuildGraphs] Construindo grafos para: " + owner + "/" + repo);
 
         GraphBuilder builder = new GraphBuilder(repoDir);
+        System.out.println("[BuildGraphs] Carregando dados dos JSONs...");
         GraphBuilder.RepoMaps maps = builder.loadRepoMaps();
-        GraphModel g1 = builder.buildGraph1_Comments(maps);
-        GraphModel g2 = builder.buildGraph2_IssueClosures(maps);
-        GraphModel g3 = builder.buildGraph3_PRInteractions(maps);
-        GraphModel gi = builder.buildIntegrated(maps);
-
+        
         Files.createDirectories(outDir);
+        
+        System.out.println("[BuildGraphs] 1/4 - Construindo Grafo 1 (Comentários)...");
+        GraphModel g1 = builder.buildGraph1_Comments(maps);
         g1.exportEdgesCsv(outDir.resolve("graph1_comments.csv"));
+        System.out.println("[BuildGraphs] ✓ Grafo 1 salvo: " + g1.getNodes().size() + " nós, " + g1.getEdges().size() + " arestas");
+        
+        System.out.println("[BuildGraphs] 2/4 - Construindo Grafo 2 (Fechamentos de Issues)...");
+        GraphModel g2 = builder.buildGraph2_IssueClosures(maps);
         g2.exportEdgesCsv(outDir.resolve("graph2_issue_closures.csv"));
+        System.out.println("[BuildGraphs] ✓ Grafo 2 salvo: " + g2.getNodes().size() + " nós, " + g2.getEdges().size() + " arestas");
+        
+        System.out.println("[BuildGraphs] 3/4 - Construindo Grafo 3 (Interações em PRs)...");
+        GraphModel g3 = builder.buildGraph3_PRInteractions(maps);
         g3.exportEdgesCsv(outDir.resolve("graph3_pr_interactions.csv"));
+        System.out.println("[BuildGraphs] ✓ Grafo 3 salvo: " + g3.getNodes().size() + " nós, " + g3.getEdges().size() + " arestas");
+        
+        System.out.println("[BuildGraphs] 4/4 - Construindo Grafo Integrado...");
+        GraphModel gi = builder.buildIntegrated(maps);
         gi.exportEdgesCsv(outDir.resolve("graph_integrated.csv"));
+        System.out.println("[BuildGraphs] ✓ Grafo Integrado salvo: " + gi.getNodes().size() + " nós, " + gi.getEdges().size() + " arestas");
 
-        System.out.println("[BuildGraphs] Grafos gerados em: " + outDir.toAbsolutePath());
+        System.out.println("[BuildGraphs] ✅ CONCLUÍDO! Grafos gerados em: " + outDir.toAbsolutePath());
     }
 
     // ---------------- .env & git remote helpers (reuso leve do App) ----------------
