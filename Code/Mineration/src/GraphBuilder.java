@@ -32,6 +32,7 @@ public class GraphBuilder {
 		public final Map<Integer,String> issueAuthor = new HashMap<>();
 		public final Map<Integer,Boolean> issueIsPR = new HashMap<>();
 		public final Map<Integer,String> prAuthor = new HashMap<>();
+		public final Map<Integer,String> prMergedBy = new HashMap<>();
 	}
 
 	public RepoMaps loadRepoMaps() {
@@ -72,67 +73,83 @@ public class GraphBuilder {
 
 	public GraphModel buildGraph2_IssueClosures(RepoMaps maps) {
 		GraphModel g = new GraphModel();
-		String issueEvents = readIfExists(repoDir.resolve("issue-events.json"));
-		if (issueEvents == null) return g;
-		for (IssueEvent ev : parseIssueEvents(issueEvents)) {
-			if (!"closed".equalsIgnoreCase(ev.event)) continue;
-			String opener = maps.issueAuthor.get(ev.number);
-			if (opener == null) continue;
-			if (ev.actor == null || ev.actor.isBlank()) continue;
-			if (ev.actor.equals(opener)) continue; // fechado pelo próprio autor: ignorar
-			g.addEdge(ev.actor, opener, W.issueClosed, "issue_closed");
+		Path eventsPath = repoDir.resolve("issue-events.json");
+		if (!Files.exists(eventsPath)) {
+			System.out.println("Arquivo issue-events.json não encontrado.");
+			return g;
 		}
+
+		String eventsJson;
+		try {
+			eventsJson = Files.readString(eventsPath, StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+		int count = processIssueEvents(eventsJson, maps, g);
+		System.out.println("Eventos de fechamento processados: " + count);
 		return g;
 	}
 
 	public GraphModel buildGraph3_PRInteractions(RepoMaps maps) {
 		GraphModel g = new GraphModel();
+		boolean hadPRData = false;
 		Path pullsDir = repoDir.resolve("pulls");
-		if (!Files.isDirectory(pullsDir)) return g;
-		try (DirectoryStream<Path> ds = Files.newDirectoryStream(pullsDir)) {
-			for (Path prDir : ds) {
-				if (!Files.isDirectory(prDir)) continue;
-				int number;
-				try { number = Integer.parseInt(prDir.getFileName().toString()); }
-				catch (NumberFormatException ex) { continue; }
-				String author = maps.prAuthor.get(number);
-				if (author == null) {
-					// tentativa via pull.json
+		if (Files.isDirectory(pullsDir)) {
+			hadPRData = true;
+			try (DirectoryStream<Path> ds = Files.newDirectoryStream(pullsDir)) {
+				for (Path prDir : ds) {
+					if (!Files.isDirectory(prDir)) continue;
+					int number;
+					try { number = Integer.parseInt(prDir.getFileName().toString()); }
+					catch (NumberFormatException ex) { continue; }
+					String author = maps.prAuthor.get(number);
+					if (author == null) {
+						String prDetail = readIfExists(prDir.resolve("pull.json"));
+						if (prDetail != null) {
+							String a = extractFirst(prDetail, USER_LOGIN_RE);
+							if (a != null) author = a;
+						}
+					}
+					if (author == null) continue;
+
+					String reviews = readIfExists(prDir.resolve("reviews.json"));
+					if (reviews != null) {
+						for (ReviewRef r : parseReviews(reviews)) {
+							if (r.user == null || r.user.isBlank()) continue;
+							String tag;
+							if ("approved".equalsIgnoreCase(r.state)) tag = "pr_approved";
+							else if ("changes_requested".equalsIgnoreCase(r.state)) tag = "pr_changes_requested";
+							else tag = "pr_review";
+							g.addEdge(r.user, author, W.reviewOrApproval, tag);
+						}
+					}
+
 					String prDetail = readIfExists(prDir.resolve("pull.json"));
 					if (prDetail != null) {
-						String a = extractFirst(prDetail, USER_LOGIN_RE);
-						if (a != null) author = a;
-					}
-				}
-				if (author == null) continue;
-
-				// reviews.json
-				String reviews = readIfExists(prDir.resolve("reviews.json"));
-				if (reviews != null) {
-					for (ReviewRef r : parseReviews(reviews)) {
-						if (r.user == null || r.user.isBlank()) continue;
-						String tag;
-						if ("approved".equalsIgnoreCase(r.state)) tag = "pr_approved";
-						else if ("changes_requested".equalsIgnoreCase(r.state)) tag = "pr_changes_requested";
-						else tag = "pr_review";
-						g.addEdge(r.user, author, W.reviewOrApproval, tag);
-					}
-				}
-
-				// pull.json -> merged_by
-				String prDetail = readIfExists(prDir.resolve("pull.json"));
-				if (prDetail != null) {
-					String mergedFlag = extractFirst(prDetail, MERGED_FLAG_RE);
-					if ("true".equalsIgnoreCase(mergedFlag)) {
-						String merger = extractFirst(prDetail, MERGED_BY_LOGIN_RE);
-						if (merger != null && !merger.isBlank() && !merger.equals(author)) {
-							g.addEdge(merger, author, W.merge, "pr_merged");
+						String mergedFlag = extractFirst(prDetail, MERGED_FLAG_RE);
+						if ("true".equalsIgnoreCase(mergedFlag)) {
+							String merger = extractFirst(prDetail, MERGED_BY_LOGIN_RE);
+							if (merger != null && !merger.isBlank() && !merger.equals(author)) {
+								g.addEdge(merger, author, W.merge, "pr_merged");
+							}
 						}
 					}
 				}
+			} catch (IOException e) {
+				throw new UncheckedIOException(e);
 			}
-		} catch (IOException e) {
-			throw new UncheckedIOException(e);
+		} else {
+			String pullDetails = readIfExists(repoDir.resolve("pull-details.json"));
+			if (pullDetails != null) {
+				hadPRData = true;
+				Map<Integer,List<ReviewRef>> prReviews = parsePullDetails(pullDetails);
+				processAggregatedPRReviews(maps, g, prReviews);
+			}
+		}
+		int mergeCount = addMergeEdges(maps, g);
+		if (mergeCount > 0) hadPRData = true;
+		if (!hadPRData) {
+			System.out.println("Nenhum dado de PR (pulls/ ou pull-details.json) encontrado.");
 		}
 		return g;
 	}
@@ -174,12 +191,14 @@ public class GraphBuilder {
 	private static final Pattern PULL_REQUEST_FIELD_RE = Pattern.compile("\"pull_request\"\s*:\s*\\{");
 	private static final Pattern ISSUE_COMMENT_ISSUE_URL_RE = Pattern.compile("\"issue_url\"\s*:\s*\"[^\"]*/issues/(\\d+)\"");
 	private static final Pattern PR_COMMENT_PR_URL_RE = Pattern.compile("\"pull_request_url\"\s*:\s*\"[^\"]*/pulls/(\\d+)\"");
-	private static final Pattern EVENT_TYPE_RE = Pattern.compile("\"event\"\s*:\s*\"([^\"]+)\"");
 	private static final Pattern ACTOR_LOGIN_RE = Pattern.compile("\"actor\"\s*:\s*\\{[^}]*\"login\"\s*:\s*\"([^\"]+)\"");
-	private static final Pattern EVENT_ISSUE_NUMBER_RE = Pattern.compile("\"issue\"\s*:\s*\\{[^}]*\"number\"\s*:\s*(\\d+)");
+	private static final Pattern CLOSED_EVENT_RE = Pattern.compile("\"event\"\s*:\s*\"closed\"");
+	private static final Pattern ISSUE_NUMBER_IN_EVENT = Pattern.compile("\"issue\"\s*:\s*\\{[^}]*\"number\"\s*:\s*(\\d+)");
+	private static final Pattern PR_NUMBER_FIELD_RE = Pattern.compile("\"pr_number\"\s*:\s*(\\d+)");
 	private static final Pattern REVIEW_STATE_RE = Pattern.compile("\"state\"\s*:\s*\"([^\"]+)\"");
 	private static final Pattern MERGED_FLAG_RE = Pattern.compile("\"merged\"\s*:\s*(true|false)");
 	private static final Pattern MERGED_BY_LOGIN_RE = Pattern.compile("\"merged_by\"\s*:\s*\\{[^}]*\"login\"\s*:\s*\"([^\"]+)\"");
+	private static final Pattern ISSUE_USER_LOGIN_RE = Pattern.compile("\"issue\"\s*:\s*\\{[^}]*\"user\"\s*:\s*\\{[^}]*\"login\"\s*:\s*\"([^\"]+)\"");
 
 	private void parseIssuesList(String json, RepoMaps maps) {
 		// Iterate roughly by objects using a matcher for top-level occurrences of "number"
@@ -213,6 +232,8 @@ public class GraphBuilder {
 			String obj = json.substring(objStart, objEnd);
 			String author = extractFirst(obj, USER_LOGIN_RE);
 			if (author != null) maps.prAuthor.put(num, author);
+			String merged = extractFirst(obj, MERGED_BY_LOGIN_RE);
+			if (merged != null) maps.prMergedBy.put(num, merged);
 			lastIdx = objEnd;
 		}
 	}
@@ -261,32 +282,7 @@ public class GraphBuilder {
 		return list;
 	}
 
-	private static class IssueEvent { String event; String actor; int number; }
-
-	private List<IssueEvent> parseIssueEvents(String json) {
-		List<IssueEvent> list = new ArrayList<>();
-		// iterate by event occurrences
-		Matcher m = EVENT_TYPE_RE.matcher(json);
-		int lastIdx = 0;
-		while (m.find(lastIdx)) {
-			int objStart = Math.max(0, json.lastIndexOf('{', m.start()));
-			int objEnd = nextObjectEnd(json, objStart);
-			if (objEnd <= objStart) { lastIdx = m.end(); continue; }
-			String obj = json.substring(objStart, objEnd);
-			String ev = extractFirst(obj, EVENT_TYPE_RE);
-			String actor = extractFirst(obj, ACTOR_LOGIN_RE);
-			String numStr = extractFirst(obj, EVENT_ISSUE_NUMBER_RE);
-			int n = -1;
-			try { if (numStr != null) n = Integer.parseInt(numStr); } catch (NumberFormatException ignored) {}
-			if (ev != null && actor != null && n > 0) {
-				IssueEvent ie = new IssueEvent();
-				ie.event = ev; ie.actor = actor; ie.number = n;
-				list.add(ie);
-			}
-			lastIdx = objEnd;
-		}
-		return list;
-	}
+	// parseIssueEvents removido - agora fazemos streaming line-by-line no buildGraph2_IssueClosures
 
 	private static class ReviewRef { String user; String state; }
 	private List<ReviewRef> parseReviews(String json) {
@@ -308,6 +304,124 @@ public class GraphBuilder {
 			lastIdx = objEnd;
 		}
 		return list;
+	}
+
+	private int processIssueEvents(String json, RepoMaps maps, GraphModel g) {
+		if (json == null || json.isBlank()) return 0;
+		int[] count = {0};
+		processTopLevelJsonObjects(json, obj -> count[0] += processIssueEventObject(obj, maps, g));
+		return count[0];
+	}
+
+	private int processIssueEventObject(String obj, RepoMaps maps, GraphModel g) {
+		if (obj == null || !CLOSED_EVENT_RE.matcher(obj).find()) return 0;
+		String actor = extractFirst(obj, ACTOR_LOGIN_RE);
+		String numStr = extractFirst(obj, ISSUE_NUMBER_IN_EVENT);
+		String issueOpener = extractFirst(obj, ISSUE_USER_LOGIN_RE);
+		if (actor == null || numStr == null) return 0;
+		int number;
+		try { number = Integer.parseInt(numStr); }
+		catch (NumberFormatException e) {
+			System.out.println("Número inválido encontrado: " + numStr);
+			return 0;
+		}
+		String opener = issueOpener != null ? issueOpener : maps.issueAuthor.get(number);
+		if (opener != null && !actor.equalsIgnoreCase(opener)) {
+			g.addEdge(actor, opener, W.issueClosed, "issue_closed");
+			return 1;
+		}
+		return 0;
+	}
+
+	private static void processTopLevelJsonObjects(String json, java.util.function.Consumer<String> consumer) {
+		boolean inObject = false;
+		boolean inString = false;
+		boolean escape = false;
+		int depth = 0;
+		StringBuilder buffer = new StringBuilder();
+		for (int i = 0; i < json.length(); i++) {
+			char c = json.charAt(i);
+			if (!inObject) {
+				if (c == '{') {
+					inObject = true;
+					depth = 1;
+					buffer.setLength(0);
+					buffer.append(c);
+					inString = false;
+					escape = false;
+				}
+				continue;
+			}
+			buffer.append(c);
+			if (escape) {
+				escape = false;
+				continue;
+			}
+			if (c == '\\') {
+				escape = true;
+				continue;
+			}
+			if (c == '"') {
+				inString = !inString;
+				continue;
+			}
+			if (!inString) {
+				if (c == '{') depth++;
+				else if (c == '}') {
+					depth--;
+					if (depth == 0) {
+						consumer.accept(buffer.toString());
+						inObject = false;
+					}
+				}
+			}
+		}
+	}
+
+	private Map<Integer,List<ReviewRef>> parsePullDetails(String json) {
+		Map<Integer,List<ReviewRef>> reviewsPerPR = new HashMap<>();
+		if (json == null || json.isBlank()) return reviewsPerPR;
+		processTopLevelJsonObjects(json, obj -> {
+			String numStr = extractFirst(obj, PR_NUMBER_FIELD_RE);
+			if (numStr == null) return;
+			int number;
+			try { number = Integer.parseInt(numStr); }
+			catch (NumberFormatException e) { return; }
+			List<ReviewRef> reviews = parseReviews(obj);
+			if (!reviews.isEmpty()) {
+				reviewsPerPR.put(number, reviews);
+			}
+		});
+		return reviewsPerPR;
+	}
+
+	private void processAggregatedPRReviews(RepoMaps maps, GraphModel g, Map<Integer,List<ReviewRef>> prReviews) {
+		for (Map.Entry<Integer,List<ReviewRef>> entry : prReviews.entrySet()) {
+			String author = maps.prAuthor.get(entry.getKey());
+			if (author == null) continue;
+			for (ReviewRef r : entry.getValue()) {
+				if (r.user == null || r.user.isBlank()) continue;
+				String tag;
+				if ("approved".equalsIgnoreCase(r.state)) tag = "pr_approved";
+				else if ("changes_requested".equalsIgnoreCase(r.state)) tag = "pr_changes_requested";
+				else tag = "pr_review";
+				g.addEdge(r.user, author, W.reviewOrApproval, tag);
+			}
+		}
+	}
+
+	private int addMergeEdges(RepoMaps maps, GraphModel g) {
+		int count = 0;
+		for (Map.Entry<Integer,String> entry : maps.prMergedBy.entrySet()) {
+			String author = maps.prAuthor.get(entry.getKey());
+			String merger = entry.getValue();
+			if (author == null || merger == null) continue;
+			if (!merger.equalsIgnoreCase(author)) {
+				g.addEdge(merger, author, W.merge, "pr_merged");
+				count++;
+			}
+		}
+		return count;
 	}
 
 	private static String extractFirst(String text, Pattern p) {
