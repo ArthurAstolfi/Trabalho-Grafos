@@ -377,19 +377,19 @@ public class Mineracao {
 
 	/**
 	 * Minera todas as PRs com seus detalhes completos (merge, reviews, aprovações).
+	 * BUSCA DETALHES INDIVIDUAIS de cada PR para obter dados de merge.
 	 * SALVA INCREMENTALMENTE com checkpoint para retomar.
 	 */
 	private void fetchPullRequestsWithReviews(RepoId repo, Path outputFile) 
 			throws IOException, InterruptedException {
 		log("  Minerando lista de pull requests...");
 		
-		// Checkpoint para reviews
+		// Checkpoint para PRs processadas
 		Path checkpointDir = outputFile.getParent().resolve(".checkpoints");
 		Files.createDirectories(checkpointDir);
-		Path reviewCheckpoint = checkpointDir.resolve("reviews.checkpoint");
+		Path prCheckpoint = checkpointDir.resolve("pr-details.checkpoint");
 		
-		// Primeiro, obter lista de todas as PRs
-		List<String> allPRs = new ArrayList<>();
+		// Primeiro, obter lista básica de todas as PRs (apenas para pegar os números)
 		List<Integer> prNumbers = new ArrayList<>();
 		String url = BASE_URL + "/repos/" + repo.toPath() + "/pulls?state=all&per_page=100";
 		int page = 1;
@@ -403,21 +403,13 @@ public class Mineracao {
 			
 			String content = resp.body().trim();
 			if (!content.isEmpty()) {
-				int openBracket = content.indexOf('[');
-				int closeBracket = content.lastIndexOf(']');
-				if (openBracket >= 0 && closeBracket > openBracket) {
-					String inside = content.substring(openBracket + 1, closeBracket).trim();
-					if (!inside.isEmpty()) {
-						allPRs.add(inside);
-						// Extrair números das PRs
-						Pattern numPattern = Pattern.compile("\"number\"\\s*:\\s*(\\d+)");
-						Matcher numMatcher = numPattern.matcher(inside);
-						while (numMatcher.find()) {
-							int num = Integer.parseInt(numMatcher.group(1));
-							if (!prNumbers.contains(num)) {
-								prNumbers.add(num);
-							}
-						}
+				// Extrair números das PRs
+				Pattern numPattern = Pattern.compile("\"number\"\\s*:\\s*(\\d+)");
+				Matcher numMatcher = numPattern.matcher(content);
+				while (numMatcher.find()) {
+					int num = Integer.parseInt(numMatcher.group(1));
+					if (!prNumbers.contains(num)) {
+						prNumbers.add(num);
 					}
 				}
 			}
@@ -432,57 +424,66 @@ public class Mineracao {
 
 		log("  ✓ Encontradas %d pull requests", prNumbers.size());
 		
-		// Verificar checkpoint de reviews processadas
+		// Verificar checkpoint de PRs processadas
 		int startFrom = 0;
 		boolean isResume = false;
-		if (Files.exists(reviewCheckpoint) && Files.exists(outputFile)) {
+		if (Files.exists(prCheckpoint) && Files.exists(outputFile)) {
 			try {
-				String lastProcessed = Files.readString(reviewCheckpoint, StandardCharsets.UTF_8).trim();
+				String lastProcessed = Files.readString(prCheckpoint, StandardCharsets.UTF_8).trim();
 				startFrom = Integer.parseInt(lastProcessed);
 				isResume = true;
 				log("  → Retomando da PR %d/%d (checkpoint encontrado)", startFrom + 1, prNumbers.size());
 			} catch (IOException | NumberFormatException e) {
-				log("  ⚠ Erro ao ler checkpoint de reviews, iniciando do zero");
+				log("  ⚠ Erro ao ler checkpoint, iniciando do zero");
 			}
 		}
 		
-		log("  Minerando reviews de cada PR (isso pode demorar)...");
+		log("  Minerando DETALHES COMPLETOS + reviews de cada PR (inclui dados de merge)...");
+		log("  ⚠ Isso faz 2 requests por PR e pode demorar bastante!");
 
 		// Abrir arquivo para escrita incremental
-		try (BufferedWriter writer = Files.newBufferedWriter(outputFile, StandardCharsets.UTF_8,
-				isResume ? StandardOpenOption.APPEND : StandardOpenOption.CREATE,
-				StandardOpenOption.TRUNCATE_EXISTING)) {
+		StandardOpenOption[] openOptions = isResume 
+			? new StandardOpenOption[]{StandardOpenOption.APPEND}
+			: new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING};
+		
+		try (BufferedWriter writer = Files.newBufferedWriter(outputFile, StandardCharsets.UTF_8, openOptions)) {
 			
 			if (!isResume) {
 				writer.write('[');
-				// Escrever todas as PRs primeiro
-				for (int i = 0; i < allPRs.size(); i++) {
-					if (i > 0) writer.write(',');
-					writer.write(allPRs.get(i));
-				}
-				writer.flush();
 			}
 			
-			// Processar reviews de cada PR
+			// Processar cada PR individualmente (detalhes + reviews)
 			for (int i = startFrom; i < prNumbers.size(); i++) {
 				Integer prNum = prNumbers.get(i);
 				
-				if ((i + 1) % 100 == 0 || (i + 1) == prNumbers.size()) {
+				if ((i + 1) % 50 == 0 || (i + 1) == prNumbers.size()) {
 					log("    Progresso: %d/%d PRs processadas...", i + 1, prNumbers.size());
 				}
 				
-				// Buscar reviews desta PR
-				String reviewsUrl = BASE_URL + "/repos/" + repo.toPath() + "/pulls/" + prNum + "/reviews?per_page=100";
-				List<String> reviews = new ArrayList<>();
-				
 				try {
+					// 1. BUSCAR DETALHES COMPLETOS DA PR (inclui merged, merged_by, merged_at)
+					String prDetailsUrl = BASE_URL + "/repos/" + repo.toPath() + "/pulls/" + prNum;
+					HttpRequest detailsReq = baseRequest(URI.create(prDetailsUrl)).GET().build();
+					HttpResponse<String> detailsResp = send(detailsReq);
+					
+					if (detailsResp.statusCode() == 404) {
+						continue; // PR não encontrada
+					}
+					ensureSuccess(detailsResp);
+					
+					String prDetails = detailsResp.body().trim();
+					
+					// 2. BUSCAR REVIEWS DESTA PR
+					String reviewsUrl = BASE_URL + "/repos/" + repo.toPath() + "/pulls/" + prNum + "/reviews?per_page=100";
+					List<String> reviews = new ArrayList<>();
+					
 					String revUrl = reviewsUrl;
 					while (revUrl != null) {
 						HttpRequest req = baseRequest(URI.create(revUrl)).GET().build();
 						HttpResponse<String> resp = send(req);
 						
 						if (resp.statusCode() == 404) {
-							break; // PR sem reviews ou não encontrada
+							break; // PR sem reviews
 						}
 						ensureSuccess(resp);
 						
@@ -503,38 +504,41 @@ public class Mineracao {
 							safeWait(50);
 						}
 					}
+					
+					// 3. CONSOLIDAR: PR completa + reviews
+					if (i > 0) writer.write(',');
+					
+					String reviewsJson = reviews.isEmpty() ? "" : String.join(",", reviews);
+					writer.write(String.format("{\"pr_details\":%s,\"reviews\":[%s]}", prDetails, reviewsJson));
+					writer.flush();
+					
+					// Atualizar checkpoint a cada 50 PRs
+					if ((i + 1) % 50 == 0) {
+						Files.writeString(prCheckpoint, String.valueOf(i + 1), StandardCharsets.UTF_8);
+					}
+					
+					safeWait(50); // Evitar rate limit
+					
 				} catch (IOException | InterruptedException e) {
 					// Se for erro de rate limit, salvar checkpoint e re-lançar
 					if (e.getMessage() != null && e.getMessage().contains("403")) {
-						Files.writeString(reviewCheckpoint, String.valueOf(i), StandardCharsets.UTF_8);
+						Files.writeString(prCheckpoint, String.valueOf(i), StandardCharsets.UTF_8);
 						log("  ✗ Rate limit atingido na PR %d/%d", i + 1, prNumbers.size());
 						log("  → Checkpoint salvo. Execute novamente após reset do rate limit.");
 						throw e;
 					}
-					// Outros erros: ignorar esta PR específica
-				}
-				
-				// Salvar review incrementalmente se houver
-				if (!reviews.isEmpty()) {
-					String reviewsJson = String.join(",", reviews);
-					writer.write(',');
-					writer.write(String.format("{\"pr_number\":%d,\"reviews\":[%s]}", prNum, reviewsJson));
-					writer.flush();
-				}
-				
-				// Atualizar checkpoint a cada 50 PRs
-				if ((i + 1) % 50 == 0) {
-					Files.writeString(reviewCheckpoint, String.valueOf(i + 1), StandardCharsets.UTF_8);
+					// Outros erros: ignorar esta PR específica e continuar
+					log("  ⚠ Erro ao processar PR %d: %s", prNum, e.getMessage());
 				}
 			}
 			
 			writer.write(']');
 			
 			// Limpar checkpoint ao concluir
-			Files.deleteIfExists(reviewCheckpoint);
+			Files.deleteIfExists(prCheckpoint);
 		}
 
-		log("  ✓ Consolidadas %d PRs com reviews", prNumbers.size());
+		log("  ✓ Consolidadas %d PRs com detalhes completos + reviews", prNumbers.size());
 	}
 
 	private HttpRequest.Builder baseRequest(URI uri) {

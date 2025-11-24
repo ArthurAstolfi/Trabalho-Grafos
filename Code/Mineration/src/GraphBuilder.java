@@ -41,6 +41,7 @@ public class GraphBuilder {
 		if (issues != null) parseIssuesList(issues, maps);
 		String pulls = readIfExists(repoDir.resolve("pulls.json"));
 		if (pulls != null) parsePullsList(pulls, maps);
+		System.out.println("[GraphBuilder] Mapas carregados: " + maps.prAuthor.size() + " PRs com author, " + maps.prMergedBy.size() + " PRs com merged_by, " + maps.issueAuthor.size() + " issues");
 		return maps;
 	}
 
@@ -73,19 +74,21 @@ public class GraphBuilder {
 
 	public GraphModel buildGraph2_IssueClosures(RepoMaps maps) {
 		GraphModel g = new GraphModel();
-		Path eventsPath = repoDir.resolve("issue-events.json");
-		if (!Files.exists(eventsPath)) {
-			System.out.println("Arquivo issue-events.json não encontrado.");
+		
+		// Ler do arquivo processado
+		Path closuresPath = repoDir.resolve("issue-events.json");
+		if (!Files.isRegularFile(closuresPath)) {
+			System.out.println("Aviso: arquivo " + closuresPath + " não encontrado. Graph 2 vazio.");
 			return g;
 		}
 
 		String eventsJson;
 		try {
-			eventsJson = Files.readString(eventsPath, StandardCharsets.UTF_8);
+			eventsJson = Files.readString(closuresPath, StandardCharsets.UTF_8);
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
-		int count = processIssueEvents(eventsJson, maps, g);
+		int count = processIssueClosureEvents(eventsJson, maps, g);
 		System.out.println("Eventos de fechamento processados: " + count);
 		return g;
 	}
@@ -93,63 +96,171 @@ public class GraphBuilder {
 	public GraphModel buildGraph3_PRInteractions(RepoMaps maps) {
 		GraphModel g = new GraphModel();
 		boolean hadPRData = false;
-		Path pullsDir = repoDir.resolve("pulls");
-		if (Files.isDirectory(pullsDir)) {
-			hadPRData = true;
-			try (DirectoryStream<Path> ds = Files.newDirectoryStream(pullsDir)) {
-				for (Path prDir : ds) {
-					if (!Files.isDirectory(prDir)) continue;
-					int number;
-					try { number = Integer.parseInt(prDir.getFileName().toString()); }
-					catch (NumberFormatException ex) { continue; }
-					String author = maps.prAuthor.get(number);
-					if (author == null) {
+		try {
+			Path pullsDir = repoDir.resolve("pulls");
+			if (Files.isDirectory(pullsDir)) {
+				hadPRData = true;
+				try (DirectoryStream<Path> ds = Files.newDirectoryStream(pullsDir)) {
+					int reviewEdges = 0;
+					int mergeEdges = 0;
+					for (Path prDir : ds) {
+						if (!Files.isDirectory(prDir)) continue;
+						int number;
+						try { number = Integer.parseInt(prDir.getFileName().toString()); }
+						catch (NumberFormatException ex) { continue; }
+						String author = maps.prAuthor.get(number);
+						if (author == null) {
+							String prDetail = readIfExists(prDir.resolve("pull.json"));
+							if (prDetail != null) {
+								String a = extractFirst(prDetail, USER_LOGIN_RE);
+								if (a != null) author = a;
+							}
+						}
+						if (author == null) continue;
+
+						String reviews = readIfExists(prDir.resolve("reviews.json"));
+						if (reviews != null) {
+							for (ReviewRef r : parseReviews(reviews)) {
+								if (r.user == null || r.user.isBlank()) continue;
+								String tag;
+								if ("approved".equalsIgnoreCase(r.state)) tag = "pr_approved";
+								else if ("changes_requested".equalsIgnoreCase(r.state)) tag = "pr_changes_requested";
+								else tag = "pr_review";
+								g.addEdge(r.user, author, W.reviewOrApproval, tag);
+								reviewEdges++;
+							}
+						}
+
 						String prDetail = readIfExists(prDir.resolve("pull.json"));
 						if (prDetail != null) {
-							String a = extractFirst(prDetail, USER_LOGIN_RE);
-							if (a != null) author = a;
-						}
-					}
-					if (author == null) continue;
-
-					String reviews = readIfExists(prDir.resolve("reviews.json"));
-					if (reviews != null) {
-						for (ReviewRef r : parseReviews(reviews)) {
-							if (r.user == null || r.user.isBlank()) continue;
-							String tag;
-							if ("approved".equalsIgnoreCase(r.state)) tag = "pr_approved";
-							else if ("changes_requested".equalsIgnoreCase(r.state)) tag = "pr_changes_requested";
-							else tag = "pr_review";
-							g.addEdge(r.user, author, W.reviewOrApproval, tag);
-						}
-					}
-
-					String prDetail = readIfExists(prDir.resolve("pull.json"));
-					if (prDetail != null) {
-						String mergedFlag = extractFirst(prDetail, MERGED_FLAG_RE);
-						if ("true".equalsIgnoreCase(mergedFlag)) {
-							String merger = extractFirst(prDetail, MERGED_BY_LOGIN_RE);
-							if (merger != null && !merger.isBlank() && !merger.equals(author)) {
-								g.addEdge(merger, author, W.merge, "pr_merged");
+							String mergedFlag = extractFirst(prDetail, MERGED_FLAG_RE);
+							if ("true".equalsIgnoreCase(mergedFlag)) {
+								String merger = extractFirst(prDetail, MERGED_BY_LOGIN_RE);
+								if (merger != null && !merger.isBlank() && !merger.equals(author)) {
+									g.addEdge(merger, author, W.merge, "pr_merged");
+									mergeEdges++;
+								}
 							}
 						}
 					}
+					System.out.println("[GraphBuilder] Grafo3 (modo diretórios) reviewEdges="+reviewEdges+" mergeEdges="+mergeEdges);
 				}
-			} catch (IOException e) {
-				throw new UncheckedIOException(e);
+			} else {
+				// Streaming parse do arquivo gigante pull-details.json (NOVO FORMATO: pr_details + reviews)
+				Path pullDetailsPath = repoDir.resolve("pull-details.json");
+				if (Files.exists(pullDetailsPath)) {
+					hadPRData = true;
+					int[] reviewEdges = {0};
+					int[] approvalEdges = {0};
+					int[] mergeEdges = {0};
+					int[] totalObjs = {0};
+					long startTime = System.currentTimeMillis();
+					
+					streamTopLevelObjects(pullDetailsPath, obj -> {
+						try {
+						totalObjs[0]++;
+						if (totalObjs[0] % 500 == 0) {
+							System.out.print("\r[GraphBuilder] Grafo3: " + totalObjs[0] + " PRs, reviews=" + reviewEdges[0] + " aprovações=" + approvalEdges[0] + " merges=" + mergeEdges[0]);
+						}
+						
+						// NOVO FORMATO: {"pr_details":{...},"reviews":[...]}
+						// Extrair pr_details
+						int prDetailsStart = obj.indexOf("\"pr_details\"");
+						if (prDetailsStart < 0) return; // Formato antigo, tentar processar direto
+						
+						int detailsObjStart = obj.indexOf('{', prDetailsStart);
+						if (detailsObjStart < 0) return;
+						int detailsObjEnd = nextObjectEnd(obj, detailsObjStart);
+						if (detailsObjEnd <= detailsObjStart) return;
+						String prDetails = obj.substring(detailsObjStart, detailsObjEnd);
+						
+						// Extrair number do pr_details
+						String numStr = extractFirst(prDetails, PR_NUMBER_FIELD_RE);
+						if (numStr == null) return;
+						int number;
+						try { number = Integer.parseInt(numStr); } catch (NumberFormatException ex) { return; }
+						
+						// Extrair author do pr_details
+						String author = extractFirst(prDetails, USER_LOGIN_RE);
+						if (author == null) {
+							author = maps.prAuthor.get(number);
+						} else {
+							maps.prAuthor.put(number, author);
+						}
+						if (author == null) return;
+						
+						// EXTRAIR DADOS DE MERGE do pr_details
+						String mergedStr = extractFirst(prDetails, MERGED_FLAG_RE);
+						if ("true".equalsIgnoreCase(mergedStr)) {
+							String mergedBy = extractFirst(prDetails, MERGED_BY_LOGIN_RE);
+							if (mergedBy != null && !mergedBy.equalsIgnoreCase(author)) {
+								maps.prMergedBy.put(number, mergedBy);
+								g.addEdge(mergedBy, author, W.merge, "pr_merged");
+								mergeEdges[0]++;
+							}
+						}
+						
+						// Extrair reviews array
+						int reviewsStart = obj.indexOf("\"reviews\"", detailsObjEnd);
+						if (reviewsStart < 0) return;
+						int reviewsArrayStart = obj.indexOf('[', reviewsStart);
+						if (reviewsArrayStart < 0) return;
+						int reviewsArrayEnd = nextArrayEnd(obj, reviewsArrayStart);
+						if (reviewsArrayEnd <= reviewsArrayStart) return;
+						String reviewsSection = obj.substring(reviewsArrayStart, reviewsArrayEnd);
+						
+						// Buscar reviews (submitted_at indica uma review submetida)
+						Pattern submittedPattern = Pattern.compile("\"submitted_at\"\\s*:\\s*\"[^\"]+\"");
+						Pattern userPattern = Pattern.compile("\"user\"\\s*:\\s*\\{[^}]*?\"login\"\\s*:\\s*\"([^\"]+)\"");
+						Pattern statePattern = Pattern.compile("\"state\"\\s*:\\s*\"([A-Z_]+)\"");
+						
+						Matcher submittedMatcher = submittedPattern.matcher(reviewsSection);
+						while (submittedMatcher.find()) {
+							// Buscar user e state próximos a este submitted_at
+							int reviewStart = Math.max(0, submittedMatcher.start() - 1000);
+							int reviewEnd = Math.min(reviewsSection.length(), submittedMatcher.end() + 500);
+							String reviewPart = reviewsSection.substring(reviewStart, reviewEnd);
+							
+							Matcher userMatcher = userPattern.matcher(reviewPart);
+							Matcher stateMatcher = statePattern.matcher(reviewPart);
+							
+							String reviewer = null;
+							String state = null;
+							
+							if (userMatcher.find()) reviewer = userMatcher.group(1);
+							if (stateMatcher.find()) state = stateMatcher.group(1);
+							
+							if (reviewer != null && state != null && !reviewer.equalsIgnoreCase(author)) {
+								String tag;
+								if ("APPROVED".equals(state)) {
+									tag = "pr_approved";
+									approvalEdges[0]++;
+								} else if ("CHANGES_REQUESTED".equals(state)) {
+									tag = "pr_changes_requested";
+									reviewEdges[0]++;
+								} else if ("COMMENTED".equals(state)) {
+									tag = "pr_review";
+									reviewEdges[0]++;
+								} else {
+									tag = "pr_review";
+									reviewEdges[0]++;
+								}
+								g.addEdge(reviewer, author, W.reviewOrApproval, tag);
+							}
+						}
+						} catch (Exception e) {
+							// silenciar erros de parse individual
+						}
+					});
+					long elapsed = (System.currentTimeMillis() - startTime) / 1000;
+					System.out.println("\n[GraphBuilder] Grafo3 concluído: reviews=" + reviewEdges[0] + " aprovações=" + approvalEdges[0] + " merges=" + mergeEdges[0] + " tempo=" + elapsed + "s");
+				}
 			}
-		} else {
-			String pullDetails = readIfExists(repoDir.resolve("pull-details.json"));
-			if (pullDetails != null) {
-				hadPRData = true;
-				Map<Integer,List<ReviewRef>> prReviews = parsePullDetails(pullDetails);
-				processAggregatedPRReviews(maps, g, prReviews);
-			}
-		}
-		int mergeCount = addMergeEdges(maps, g);
-		if (mergeCount > 0) hadPRData = true;
-		if (!hadPRData) {
-			System.out.println("Nenhum dado de PR (pulls/ ou pull-details.json) encontrado.");
+			// Não precisamos mais chamar addMergeEdges separadamente, já processamos merges acima
+			if (!hadPRData) System.out.println("Nenhum dado de PR (pulls/ ou pull-details.json) encontrado.");
+		} catch (Throwable t) {
+			System.err.println("[GraphBuilder] ERRO ao construir Grafo 3: "+t.getClass().getName()+" - "+t.getMessage());
+			t.printStackTrace();
 		}
 		return g;
 	}
@@ -194,7 +305,7 @@ public class GraphBuilder {
 	private static final Pattern ACTOR_LOGIN_RE = Pattern.compile("\"actor\"\s*:\s*\\{[^}]*\"login\"\s*:\s*\"([^\"]+)\"");
 	private static final Pattern CLOSED_EVENT_RE = Pattern.compile("\"event\"\s*:\s*\"closed\"");
 	private static final Pattern ISSUE_NUMBER_IN_EVENT = Pattern.compile("\"issue\"\s*:\s*\\{[^}]*\"number\"\s*:\s*(\\d+)");
-	private static final Pattern PR_NUMBER_FIELD_RE = Pattern.compile("\"pr_number\"\s*:\s*(\\d+)");
+	private static final Pattern PR_NUMBER_FIELD_RE = Pattern.compile("\"(?:pr_)?number\"\s*:\s*(\\d+)");
 	private static final Pattern REVIEW_STATE_RE = Pattern.compile("\"state\"\s*:\s*\"([^\"]+)\"");
 	private static final Pattern MERGED_FLAG_RE = Pattern.compile("\"merged\"\s*:\s*(true|false)");
 	private static final Pattern MERGED_BY_LOGIN_RE = Pattern.compile("\"merged_by\"\s*:\s*\\{[^}]*\"login\"\s*:\s*\"([^\"]+)\"");
@@ -306,7 +417,7 @@ public class GraphBuilder {
 		return list;
 	}
 
-	private int processIssueEvents(String json, RepoMaps maps, GraphModel g) {
+	private int processIssueClosureEvents(String json, RepoMaps maps, GraphModel g) {
 		if (json == null || json.isBlank()) return 0;
 		int[] count = {0};
 		processTopLevelJsonObjects(json, obj -> count[0] += processIssueEventObject(obj, maps, g));
@@ -378,37 +489,48 @@ public class GraphBuilder {
 		}
 	}
 
-	private Map<Integer,List<ReviewRef>> parsePullDetails(String json) {
-		Map<Integer,List<ReviewRef>> reviewsPerPR = new HashMap<>();
-		if (json == null || json.isBlank()) return reviewsPerPR;
-		processTopLevelJsonObjects(json, obj -> {
-			String numStr = extractFirst(obj, PR_NUMBER_FIELD_RE);
-			if (numStr == null) return;
-			int number;
-			try { number = Integer.parseInt(numStr); }
-			catch (NumberFormatException e) { return; }
-			List<ReviewRef> reviews = parseReviews(obj);
-			if (!reviews.isEmpty()) {
-				reviewsPerPR.put(number, reviews);
+	private void streamTopLevelObjects(Path path, java.util.function.Consumer<String> consumer) {
+		try (java.io.BufferedReader reader = new java.io.BufferedReader(
+				Files.newBufferedReader(path, StandardCharsets.UTF_8), 128*1024)) {
+			StringBuilder buffer = new StringBuilder(8192);
+			boolean inObject = false;
+			boolean inString = false;
+			boolean escape = false;
+			int depth = 0;
+			int ch;
+			while ((ch = reader.read()) != -1) {
+				char c = (char) ch;
+				if (!inObject) {
+					if (c == '{') {
+						inObject = true;
+						depth = 1;
+						buffer.setLength(0);
+						buffer.append(c);
+						inString = false;
+						escape = false;
+					}
+					continue;
+				}
+				buffer.append(c);
+				if (escape) { escape = false; continue; }
+				if (c == '\\') { escape = true; continue; }
+				if (c == '"') { inString = !inString; continue; }
+				if (!inString) {
+					if (c == '{') depth++;
+					else if (c == '}') {
+						depth--;
+						if (depth == 0) {
+							consumer.accept(buffer.toString());
+							inObject = false;
+						}
+					}
+				}
 			}
-		});
-		return reviewsPerPR;
-	}
-
-	private void processAggregatedPRReviews(RepoMaps maps, GraphModel g, Map<Integer,List<ReviewRef>> prReviews) {
-		for (Map.Entry<Integer,List<ReviewRef>> entry : prReviews.entrySet()) {
-			String author = maps.prAuthor.get(entry.getKey());
-			if (author == null) continue;
-			for (ReviewRef r : entry.getValue()) {
-				if (r.user == null || r.user.isBlank()) continue;
-				String tag;
-				if ("approved".equalsIgnoreCase(r.state)) tag = "pr_approved";
-				else if ("changes_requested".equalsIgnoreCase(r.state)) tag = "pr_changes_requested";
-				else tag = "pr_review";
-				g.addEdge(r.user, author, W.reviewOrApproval, tag);
-			}
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
 		}
 	}
+
 
 	private int addMergeEdges(RepoMaps maps, GraphModel g) {
 		int count = 0;
@@ -449,6 +571,23 @@ public class GraphBuilder {
 			if (inStr) continue;
 			if (c == '{') depth++;
 			else if (c == '}') { depth--; if (depth == 0) return i + 1; }
+		}
+		return s.length();
+	}
+
+	private static int nextArrayEnd(String s, int startIdx) {
+		if (startIdx < 0 || startIdx >= s.length() || s.charAt(startIdx) != '[') return startIdx + 1;
+		int depth = 0;
+		boolean inStr = false;
+		for (int i = startIdx; i < s.length(); i++) {
+			char c = s.charAt(i);
+			if (c == '"') {
+				boolean escaped = i > 0 && s.charAt(i-1) == '\\';
+				if (!escaped) inStr = !inStr;
+			}
+			if (inStr) continue;
+			if (c == '[') depth++;
+			else if (c == ']') { depth--; if (depth == 0) return i + 1; }
 		}
 		return s.length();
 	}

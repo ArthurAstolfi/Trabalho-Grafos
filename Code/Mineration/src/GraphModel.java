@@ -78,7 +78,7 @@ public class GraphModel {
 				String tags = encodeTags(e.tagCounts);
 				sb.append(escape(e.from)).append(',')
 				  .append(escape(e.to)).append(',')
-				  .append(String.format(Locale.ROOT, "%.3f", e.weight)).append(',')
+				  .append(String.format(Locale.ROOT, "%.1f", e.weight)).append(',')
 				  .append(e.count).append(',')
 				  .append(escape(tags)).append('\n');
 			}
