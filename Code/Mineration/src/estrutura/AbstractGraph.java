@@ -63,14 +63,12 @@ public abstract class AbstractGraph {
     public boolean isDivergent(int u1, int v1, int u2, int v2) {
         validateVertex(u1); validateVertex(v1);
         validateVertex(u2); validateVertex(v2);
-        // Divergente: Mesma origem (u1 == u2), destinos diferentes
         return (u1 == u2) && (v1 != v2) && hasEdge(u1, v1) && hasEdge(u2, v2);
     }
 
     public boolean isConvergent(int u1, int v1, int u2, int v2) {
         validateVertex(u1); validateVertex(v1);
         validateVertex(u2); validateVertex(v2);
-        // Convergente: Mesmos destinos (v1 == v2), origens diferentes
         return (v1 == v2) && (u1 != u2) && hasEdge(u1, v1) && hasEdge(u2, v2);
     }
 
@@ -95,7 +93,6 @@ public abstract class AbstractGraph {
     }
 
     public boolean isCompleteGraph() {
-        // Num arestas deve ser n*(n-1) para grafo direcionado sem laços
         return numEdges == (numVertices * (numVertices - 1));
     }
 
@@ -114,7 +111,7 @@ public abstract class AbstractGraph {
             int u = queue.remove(0);
             visitedCount++;
             
-            // Verifica sucessores (arestas saindo)
+            // Verifica sucessores
             for (int v : getSuccessors(u)) {
                 if (!visited[v]) {
                     visited[v] = true;
@@ -122,7 +119,7 @@ public abstract class AbstractGraph {
                 }
             }
             
-            // Verifica antecessores (arestas chegando - para conectividade fraca)
+            // Verifica antecessores
             for (int v : getPredecessors(u)) {
                 if (!visited[v]) {
                     visited[v] = true;
@@ -140,14 +137,12 @@ public abstract class AbstractGraph {
             writer.write("<gexf xmlns=\"http://www.gexf.net/1.2draft\" version=\"1.2\">\n");
             writer.write("  <graph defaultedgetype=\"directed\">\n");
             
-            // Nós
             writer.write("    <nodes>\n");
             for (int i = 0; i < numVertices; i++) {
                 writer.write(String.format("      <node id=\"%d\" label=\"Vértice %d\" />\n", i, i));
             }
             writer.write("    </nodes>\n");
             
-            // Arestas
             writer.write("    <edges>\n");
             int edgeId = 0;
             for (int u = 0; u < numVertices; u++) {

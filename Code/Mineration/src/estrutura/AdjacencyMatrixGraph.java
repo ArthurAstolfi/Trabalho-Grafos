@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class AdjacencyMatrixGraph extends AbstractGraph {
-    private Double[][] matrix; // Null indica sem aresta, valor indica peso
+    private Double[][] matrix;
 
     public AdjacencyMatrixGraph(int numVertices) {
         super(numVertices);
@@ -23,10 +23,10 @@ public class AdjacencyMatrixGraph extends AbstractGraph {
         validateVertex(u);
         validateVertex(v);
         
-        if (u == v) return; // Grafo simples: sem laços
-        if (hasEdge(u, v)) return; // Grafo simples: sem múltiplas arestas (idempotente)
+        if (u == v) return;
+        if (hasEdge(u, v)) return;
 
-        matrix[u][v] = 1.0; // Peso padrão
+        matrix[u][v] = 1.0;
         numEdges++;
     }
 
@@ -46,7 +46,6 @@ public class AdjacencyMatrixGraph extends AbstractGraph {
         validateVertex(u);
         validateVertex(v);
         
-        // Se a aresta não existe, cria
         if (!hasEdge(u, v)) {
             if (u == v) return;
             numEdges++;

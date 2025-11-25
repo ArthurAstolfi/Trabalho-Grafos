@@ -2,36 +2,36 @@ package app;
 
 import estrutura.AbstractGraph;
 import io.GraphLoader;
-
 import java.io.IOException;
 
 public class Main {
     public static void main(String[] args) {
         try {
-            // Ajuste o caminho para onde o seu CSV realmente está
             String path = "Code/Mineration/data/spring-projects/spring-boot/graphs/graph_integrated.csv";
+            String saidaGephi = "resultado_final.gexf";
             
-            System.out.println("Carregando grafo...");
+            System.out.println("Carregando grafo de: " + path);
             
-            GraphLoader.GraphData data = GraphLoader.loadGraph(path, false); // false = Lista de Adjacência
-            AbstractGraph g = data.graph;
+            GraphLoader.GraphData data = GraphLoader.loadGraph(path, false);
+            AbstractGraph grafo = data.graph;
 
-            System.out.println("=== Sucesso! ===");
-            System.out.println("Vértices: " + g.getVertexCount());
-            System.out.println("Arestas: " + g.getEdgeCount());
-            System.out.println("Conexo? " + g.isConnected());
+            System.out.println("Grafo carregado com sucesso!");
+            System.out.println("- Vértices: " + grafo.getVertexCount());
+            System.out.println("- Arestas: " + grafo.getEdgeCount());
+            System.out.println("- Conexo? " + (grafo.isConnected() ? "Sim" : "Não"));
 
-            String userExemplo = "wilkinsona";
-            if (data.userToIndex.containsKey(userExemplo)) {
-                int id = data.userToIndex.get(userExemplo);
-                System.out.println("Grau de saída de " + userExemplo + ": " + g.getVertexOutDegree(id));
-            }
+            AnaliseService analisador = new AnaliseService();
+            analisador.executarAnaliseCompleta(grafo, data);
 
-            g.exportToGEPHI("saida_grafo.gexf");
-            System.out.println("Exportado para saida_grafo.gexf");
+            System.out.println("\n[4] EXPORTAÇÃO");
+            grafo.exportToGEPHI(saidaGephi);
+            System.out.println("Arquivo para Gephi gerado: " + saidaGephi);
 
         } catch (IOException e) {
-            System.err.println("Erro ao ler arquivo: " + e.getMessage());
+            System.err.println("Erro de E/S (Arquivo não encontrado ou erro de leitura): " + e.getMessage());
+        } catch (Exception e) {
+            System.err.println("Erro durante a execução:");
+            e.printStackTrace();
         }
     }
 }
