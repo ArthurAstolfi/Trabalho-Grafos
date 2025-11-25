@@ -1,3 +1,4 @@
+package mineracao;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.net.URI;

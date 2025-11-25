@@ -1,6 +1,9 @@
+package mineracao;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+
+import mineracao.GraphBuilder.RepoMaps;
 
 /**
  * BuildGraphs: Etapa 2 – lê JSONs consolidados e gera CSVs dos grafos.
