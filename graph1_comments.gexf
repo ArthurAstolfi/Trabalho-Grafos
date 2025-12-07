@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gexf xmlns="http://www.gexf.net/1.2draft" version="1.2">
+  <graph defaultedgetype="directed">
+    <nodes>
+      <node id="0" label="Vértice 0" />
+      <node id="1" label="Vértice 1" />
+      <node id="2" label="Vértice 2" />
+      <node id="3" label="Vértice 3" />
+      <node id="4" label="Vértice 4" />
+      <node id="5" label="Vértice 5" />
+      <node id="6" label="Vértice 6" />
+      <node id="7" label="Vértice 7" />
+      <node id="8" label="Vértice 8" />
+      <node id="9" label="Vértice 9" />
+      <node id="10" label="Vértice 10" />
+      <node id="11" label="Vértice 11" />
+      <node id="12" label="Vértice 12" />
+      <node id="13" label="Vértice 13" />
+      <node id="14" label="Vértice 14" />
+      <node id="15" label="Vértice 15" />
+      <node id="16" label="Vértice 16" />
+      <node id="17" label="Vértice 17" />
+      <node id="18" label="Vértice 18" />
+      <node id="19" label="Vértice 19" />
+      <node id="20" label="Vértice 20" />
+      <node id="21" label="Vértice 21" />
+      <node id="22" label="Vértice 22" />
+      <node id="23" label="Vértice 23" />
+      <node id="24" label="Vértice 24" />
+      <node id="25" label="Vértice 25" />
+      <node id="26" label="Vértice 26" />
+      <node id="27" label="Vértice 27" />
+      <node id="28" label="Vértice 28" />
+      <node id="29" label="Vértice 29" />
+      <node id="30" label="Vértice 30" />
+      <node id="31" label="Vértice 31" />
+      <node id="32" label="Vértice 32" />
+      <node id="33" label="Vértice 33" />
+      <node id="34" label="Vértice 34" />
+      <node id="35" label="Vértice 35" />
+      <node id="36" label="Vértice 36" />
+      <node id="37" label="Vértice 37" />
+      <node id="38" label="Vértice 38" />
+      <node id="39" label="Vértice 39" />
+      <node id="40" label="Vértice 40" />
+      <node id="41" label="Vértice 41" />
+      <node id="42" label="Vértice 42" />
+      <node id="43" label="Vértice 43" />
+      <node id="44" label="Vértice 44" />
+      <node id="45" label="Vértice 45" />
+      <node id="46" label="Vértice 46" />
+      <node id="47" label="Vértice 47" />
+      <node id="48" label="Vértice 48" />
+      <node id="49" label="Vértice 49" />
+      <node id="50" label="Vértice 50" />
+      <node id="51" label="Vértice 51" />
+      <node id="52" label="Vértice 52" />
+      <node id="53" label="Vértice 53" />
+      <node id="54" label="Vértice 54" />
+      <node id="55" label="Vértice 55" />
+      <node id="56" label="Vértice 56" />
+      <node id="57" label="Vértice 57" />
+      <node id="58" label="Vértice 58" />
+      <node id="59" label="Vértice 59" />
+      <node id="60" label="Vértice 60" />
+      <node id="61" label="Vértice 61" />
+      <node id="62" label="Vértice 62" />
+      <node id="63" label="Vértice 63" />
+      <node id="64" label="Vértice 64" />
+      <node id="65" label="Vértice 65" />
+      <node id="66" label="Vértice 66" />
+      <node id="67" label="Vértice 67" />
+      <node id="68" label="Vértice 68" />
+      <node id="69" label="Vértice 69" />
+      <node id="70" label="Vértice 70" />
+      <node id="71" label="Vértice 71" />
+      <node id="72" label="Vértice 72" />
+      <node id="73" label="Vértice 73" />
+      <node id="74" label="Vértice 74" />
+      <node id="75" label="Vértice 75" />
+      <node id="76" label="Vértice 76" />
+      <node id="77" label="Vértice 77" />
+      <node id="78" label="Vértice 78" />
+      <node id="79" label="Vértice 79" />
+    </nodes>
+    <edges>
+      <edge id="0" source="0" target="73" weight="6.00" />
+      <edge id="1" source="2" target="73" weight="6.00" />
+      <edge id="2" source="3" target="73" weight="3.00" />
+      <edge id="3" source="4" target="73" weight="6.00" />
+      <edge id="4" source="5" target="73" weight="9.00" />
+      <edge id="5" source="6" target="28" weight="2.00" />
+      <edge id="6" source="7" target="73" weight="9.00" />
+      <edge id="7" source="8" target="73" weight="3.00" />
+      <edge id="8" source="9" target="73" weight="18.00" />
+      <edge id="9" source="10" target="73" weight="9.00" />
+      <edge id="10" source="11" target="73" weight="3.00" />
+      <edge id="11" source="12" target="54" weight="2.00" />
+      <edge id="12" source="12" target="73" weight="15.00" />
+      <edge id="13" source="12" target="28" weight="2.00" />
+      <edge id="14" source="14" target="73" weight="9.00" />
+      <edge id="15" source="16" target="73" weight="3.00" />
+      <edge id="16" source="18" target="73" weight="3.00" />
+      <edge id="17" source="19" target="1" weight="4.00" />
+      <edge id="18" source="19" target="65" weight="8.00" />
+      <edge id="19" source="19" target="39" weight="6.00" />
+      <edge id="20" source="19" target="73" weight="399.00" />
+      <edge id="21" source="19" target="41" weight="2.00" />
+      <edge id="22" source="19" target="10" weight="4.00" />
+      <edge id="23" source="19" target="12" weight="2.00" />
+      <edge id="24" source="19" target="77" weight="4.00" />
+      <edge id="25" source="19" target="45" weight="2.00" />
+      <edge id="26" source="19" target="15" weight="4.00" />
+      <edge id="27" source="19" target="21" weight="2.00" />
+      <edge id="28" source="19" target="54" weight="2.00" />
+      <edge id="29" source="19" target="24" weight="2.00" />
+      <edge id="30" source="19" target="56" weight="4.00" />
+      <edge id="31" source="19" target="27" weight="2.00" />
+      <edge id="32" source="19" target="60" weight="6.00" />
+      <edge id="33" source="19" target="28" weight="8.00" />
+      <edge id="34" source="19" target="61" weight="6.00" />
+      <edge id="35" source="19" target="31" weight="4.00" />
+      <edge id="36" source="20" target="52" weight="2.00" />
+      <edge id="37" source="21" target="73" weight="9.00" />
+      <edge id="38" source="22" target="73" weight="12.00" />
+      <edge id="39" source="23" target="73" weight="18.00" />
+      <edge id="40" source="26" target="73" weight="3.00" />
+      <edge id="41" source="28" target="73" weight="33.00" />
+      <edge id="42" source="29" target="73" weight="3.00" />
+      <edge id="43" source="30" target="73" weight="6.00" />
+      <edge id="44" source="32" target="73" weight="6.00" />
+      <edge id="45" source="33" target="73" weight="3.00" />
+      <edge id="46" source="34" target="73" weight="6.00" />
+      <edge id="47" source="35" target="73" weight="3.00" />
+      <edge id="48" source="37" target="73" weight="6.00" />
+      <edge id="49" source="38" target="73" weight="3.00" />
+      <edge id="50" source="40" target="73" weight="3.00" />
+      <edge id="51" source="42" target="73" weight="6.00" />
+      <edge id="52" source="43" target="73" weight="3.00" />
+      <edge id="53" source="44" target="73" weight="3.00" />
+      <edge id="54" source="46" target="73" weight="6.00" />
+      <edge id="55" source="47" target="73" weight="2.00" />
+      <edge id="56" source="48" target="73" weight="12.00" />
+      <edge id="57" source="48" target="45" weight="6.00" />
+      <edge id="58" source="49" target="73" weight="6.00" />
+      <edge id="59" source="50" target="73" weight="24.00" />
+      <edge id="60" source="51" target="73" weight="15.00" />
+      <edge id="61" source="53" target="73" weight="3.00" />
+      <edge id="62" source="55" target="73" weight="2.00" />
+      <edge id="63" source="56" target="68" weight="4.00" />
+      <edge id="64" source="56" target="73" weight="9.00" />
+      <edge id="65" source="56" target="45" weight="2.00" />
+      <edge id="66" source="57" target="73" weight="3.00" />
+      <edge id="67" source="58" target="17" weight="4.00" />
+      <edge id="68" source="58" target="68" weight="6.00" />
+      <edge id="69" source="58" target="54" weight="4.00" />
+      <edge id="70" source="58" target="56" weight="2.00" />
+      <edge id="71" source="58" target="73" weight="102.00" />
+      <edge id="72" source="58" target="10" weight="4.00" />
+      <edge id="73" source="58" target="27" weight="4.00" />
+      <edge id="74" source="58" target="28" weight="8.00" />
+      <edge id="75" source="58" target="13" weight="2.00" />
+      <edge id="76" source="59" target="73" weight="3.00" />
+      <edge id="77" source="60" target="73" weight="2.00" />
+      <edge id="78" source="62" target="73" weight="3.00" />
+      <edge id="79" source="63" target="73" weight="3.00" />
+      <edge id="80" source="64" target="73" weight="8.00" />
+      <edge id="81" source="65" target="73" weight="9.00" />
+      <edge id="82" source="66" target="73" weight="3.00" />
+      <edge id="83" source="67" target="73" weight="15.00" />
+      <edge id="84" source="69" target="73" weight="3.00" />
+      <edge id="85" source="70" target="73" weight="9.00" />
+      <edge id="86" source="71" target="73" weight="2.00" />
+      <edge id="87" source="72" target="73" weight="3.00" />
+      <edge id="88" source="74" target="73" weight="3.00" />
+      <edge id="89" source="75" target="36" weight="2.00" />
+      <edge id="90" source="75" target="25" weight="2.00" />
+      <edge id="91" source="75" target="73" weight="26.00" />
+      <edge id="92" source="75" target="28" weight="2.00" />
+      <edge id="93" source="76" target="73" weight="3.00" />
+      <edge id="94" source="77" target="73" weight="9.00" />
+      <edge id="95" source="78" target="73" weight="12.00" />
+      <edge id="96" source="79" target="73" weight="9.00" />
+    </edges>
+  </graph>
+</gexf>

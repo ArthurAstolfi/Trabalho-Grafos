@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gexf xmlns="http://www.gexf.net/1.2draft" version="1.2">
+  <graph defaultedgetype="directed">
+    <nodes>
+      <node id="0" label="Vértice 0" />
+      <node id="1" label="Vértice 1" />
+      <node id="2" label="Vértice 2" />
+      <node id="3" label="Vértice 3" />
+      <node id="4" label="Vértice 4" />
+      <node id="5" label="Vértice 5" />
+      <node id="6" label="Vértice 6" />
+      <node id="7" label="Vértice 7" />
+      <node id="8" label="Vértice 8" />
+      <node id="9" label="Vértice 9" />
+      <node id="10" label="Vértice 10" />
+      <node id="11" label="Vértice 11" />
+      <node id="12" label="Vértice 12" />
+      <node id="13" label="Vértice 13" />
+      <node id="14" label="Vértice 14" />
+      <node id="15" label="Vértice 15" />
+      <node id="16" label="Vértice 16" />
+      <node id="17" label="Vértice 17" />
+      <node id="18" label="Vértice 18" />
+      <node id="19" label="Vértice 19" />
+      <node id="20" label="Vértice 20" />
+      <node id="21" label="Vértice 21" />
+      <node id="22" label="Vértice 22" />
+      <node id="23" label="Vértice 23" />
+      <node id="24" label="Vértice 24" />
+      <node id="25" label="Vértice 25" />
+      <node id="26" label="Vértice 26" />
+      <node id="27" label="Vértice 27" />
+      <node id="28" label="Vértice 28" />
+      <node id="29" label="Vértice 29" />
+      <node id="30" label="Vértice 30" />
+      <node id="31" label="Vértice 31" />
+      <node id="32" label="Vértice 32" />
+      <node id="33" label="Vértice 33" />
+      <node id="34" label="Vértice 34" />
+      <node id="35" label="Vértice 35" />
+      <node id="36" label="Vértice 36" />
+      <node id="37" label="Vértice 37" />
+    </nodes>
+    <edges>
+      <edge id="0" source="13" target="5" weight="3.00" />
+      <edge id="1" source="13" target="10" weight="3.00" />
+      <edge id="2" source="13" target="14" weight="3.00" />
+      <edge id="3" source="22" target="32" weight="6.00" />
+      <edge id="4" source="29" target="32" weight="3.00" />
+      <edge id="5" source="29" target="34" weight="3.00" />
+      <edge id="6" source="29" target="35" weight="3.00" />
+      <edge id="7" source="29" target="21" weight="3.00" />
+      <edge id="8" source="29" target="37" weight="3.00" />
+      <edge id="9" source="29" target="23" weight="3.00" />
+      <edge id="10" source="29" target="9" weight="3.00" />
+      <edge id="11" source="29" target="28" weight="3.00" />
+      <edge id="12" source="32" target="0" weight="3.00" />
+      <edge id="13" source="32" target="2" weight="3.00" />
+      <edge id="14" source="32" target="34" weight="15.00" />
+      <edge id="15" source="32" target="6" weight="3.00" />
+      <edge id="16" source="32" target="7" weight="6.00" />
+      <edge id="17" source="32" target="8" weight="3.00" />
+      <edge id="18" source="32" target="12" weight="3.00" />
+      <edge id="19" source="32" target="20" weight="3.00" />
+      <edge id="20" source="32" target="23" weight="3.00" />
+      <edge id="21" source="32" target="24" weight="3.00" />
+      <edge id="22" source="32" target="25" weight="3.00" />
+      <edge id="23" source="32" target="26" weight="3.00" />
+      <edge id="24" source="32" target="27" weight="3.00" />
+      <edge id="25" source="32" target="30" weight="3.00" />
+      <edge id="26" source="32" target="31" weight="3.00" />
+      <edge id="27" source="35" target="32" weight="3.00" />
+      <edge id="28" source="35" target="1" weight="3.00" />
+      <edge id="29" source="35" target="33" weight="3.00" />
+      <edge id="30" source="35" target="34" weight="3.00" />
+      <edge id="31" source="35" target="3" weight="6.00" />
+      <edge id="32" source="35" target="4" weight="3.00" />
+      <edge id="33" source="35" target="36" weight="3.00" />
+      <edge id="34" source="35" target="11" weight="3.00" />
+      <edge id="35" source="35" target="15" weight="3.00" />
+      <edge id="36" source="35" target="16" weight="3.00" />
+      <edge id="37" source="35" target="17" weight="3.00" />
+      <edge id="38" source="35" target="18" weight="3.00" />
+      <edge id="39" source="35" target="19" weight="3.00" />
+    </edges>
+  </graph>
+</gexf>
