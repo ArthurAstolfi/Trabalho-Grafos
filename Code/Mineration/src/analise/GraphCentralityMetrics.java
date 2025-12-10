@@ -3,6 +3,7 @@ package analise;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -170,5 +171,29 @@ public class GraphCentralityMetrics {
         for (int i = 0; i < n; i++)
             result.put(i, cb[i]);
         return result;
+    }
+
+    public static Map<Integer, Double> calculateTop5Degree(AbstractGraph graph) {
+        Map<Integer, Double> degreeMap = new HashMap<>();
+        int n = graph.getVertexCount();
+
+        if (n <= 1)
+            return degreeMap;
+
+        // Calcula degree bruto (in + out)
+        for (int i = 0; i < n; i++) {
+            double degree = graph.getVertexInDegree(i) + graph.getVertexOutDegree(i);
+            degreeMap.put(i, degree);
+        }
+
+        // Ordena pelo maior degree
+        List<Map.Entry<Integer, Double>> sorted = new ArrayList<>(degreeMap.entrySet());
+        sorted.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+
+        // Retorna somente Top 5
+        Map<Integer, Double> top5 = new LinkedHashMap<>();
+        sorted.stream().limit(5).forEach(e -> top5.put(e.getKey(), e.getValue()));
+
+        return top5;
     }
 }
